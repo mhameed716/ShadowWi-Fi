@@ -55,13 +55,16 @@ jobs:
               echo "::error::TAIL|${line:0:700}"
             done
           fi
-          # آخر أسطر سجل الاختبار (بعد فك أسطر \r) — احتياطي إن لم تصدر
-          # تعليقات reporter github
+          # قسم الاستثناء من سجل الاختبار + آخر الأسطر (بعد فك \r)
           if [ -f ci_test.log ]; then
-            tail -c 20000 ci_test.log | tr '\r' '\n' | grep -v '^[[:space:]]*$' | tail -n 6 |
+            tr '\r' '\n' < ci_test.log | grep -v '^[[:space:]]*$' > /tmp/test_clean.log
+            awk '/EXCEPTION CAUGHT BY|Test failed|Expected:|Actual:|Which:|The following|was thrown/{print; count++} count>=8{exit}' /tmp/test_clean.log |
               while IFS= read -r line; do
-                echo "::error::T|${line:0:600}"
+                echo "::error::EXC|${line:0:600}"
               done
+            tail -n 3 /tmp/test_clean.log | while IFS= read -r line; do
+              echo "::error::T|${line:0:600}"
+            done
           fi
 
       - name: تجهيز ملف التوزيع
