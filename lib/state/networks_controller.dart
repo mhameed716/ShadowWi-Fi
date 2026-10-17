@@ -3,9 +3,10 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../data/models/wifi_network_item.dart';
 import '../data/services/permission_service.dart';
+import '../data/services/system_channel.dart';
 import '../data/services/wifi_scan_service.dart';
 
-/// حالات أذون الموقع.
+/// حالة أذون الموقع.
 enum LocationPermissionState {
   unknown,
   granted,
@@ -13,7 +14,7 @@ enum LocationPermissionState {
   permanentlyDenied,
 }
 
-/// manages تبويب الشبكات وفحصها.
+/// يدير تبويب الشبكات: الفحص الحقيقي، الأذونات، وحالة العوائق.
 class NetworksController extends ChangeNotifier {
   NetworksController(this._scanService);
 
@@ -27,6 +28,12 @@ class NetworksController extends ChangeNotifier {
 
   /// حالة إذن الموقع.
   LocationPermissionState permission = LocationPermissionState.unknown;
+
+  /// عائق حالي يمنع الفحص (أذونات أو خدمة الموقع) — null عند سماح الفحص.
+  ///
+  /// عندما لا يكون null تعرض الواجهة بطاقة المعالجة **بدلاً** من حالة
+  /// «لا توجد شبكات»، إذ إن القائمة الفارغة هنا مضللة.
+  WifiScanBlocker? blocker;
 
   /// رسالة خطأ آنية.
   String? error;
@@ -42,51 +49,52 @@ class NetworksController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// يفحص الشبكات القريبة (مع السحب للتحديث).
+  /// يفحص الشبكات القريبة فعلياً (يعمل دون إنترنت).
   Future<void> scan() async {
     if (scanning) return;
     scanning = true;
     error = null;
+    blocker = null;
     notifyListeners();
 
     try {
-      await refreshPermissionState();
       networks = await _scanService.scan();
       lastScanAt = DateTime.now();
       permission = LocationPermissionState.granted;
     } on WifiScanException catch (e) {
+      blocker = e.blocker;
       error = e.message;
       await refreshPermissionState();
     } catch (e) {
       error = 'تعذّر فحص الشبكات: $e';
+      await refreshPermissionState();
     } finally {
       scanning = false;
       notifyListeners();
     }
   }
 
-  /// يطلب الأذونات مرة أخرى.
+  /// يطلب الأذونات من المستخدم، وعند المنح يبدأ الفحص تلقائياً.
   Future<bool> requestPermission() async {
     final bool granted =
         await PermissionService.instance.requestScanPermissions();
     await refreshPermissionState();
     if (granted) {
+      blocker = null;
       await scan();
     }
     return granted;
   }
 
-  /// يفتح إعدادات التطبيق.
+  /// يفتح إعدادات التطبيق (للمنح بعد رفض نهائي).
   Future<void> openSettings() async {
     await PermissionService.instance.openSettings();
   }
 
-  /// هل نحتاج إلى شرح سبب طلب الإذن؟
-  bool get needsRationale => permission == LocationPermissionState.denied;
-
-  /// هل الإذن ممنوع نهائياً؟
-  bool get isPermanentlyDenied =>
-      permission == LocationPermissionState.permanentlyDenied;
+  /// يفتح إعدادات الموقع في النظام لتفعيل خدمة الموقع.
+  Future<void> openLocationSettings() async {
+    await SystemChannel.instance.openLocationSettings();
+  }
 
   /// رسالة خطأ آنية (تُستهلك مرة واحدة).
   String? takeError() {

@@ -65,6 +65,19 @@ void main() {
       expect(controller.total, 0);
     });
 
+    test('setGateway يحدّث البوابة يدوياً للاستقلال عن الاكتشاف', () {
+      final NetworkAttemptsController controller = NetworkAttemptsController();
+      controller.setTarget(network, '');
+      expect(controller.gatewayUrl, isEmpty);
+
+      controller.setGateway('http://10.0.0.1');
+      expect(controller.gatewayUrl, 'http://10.0.0.1');
+
+      // setTarget ببوابة فارغة لا يمسح المدخل اليدوي.
+      controller.setTarget(network, '');
+      expect(controller.gatewayUrl, 'http://10.0.0.1');
+    });
+
     test('الإيقاف المؤقت والاستئناف خارج التشغيل لا يغيّران الحالة', () {
       final NetworkAttemptsController controller = NetworkAttemptsController();
       controller.pause();

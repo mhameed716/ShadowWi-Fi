@@ -62,6 +62,18 @@ class SystemChannel {
     }
   }
 
+  /// يفتح إعدادات الموقع في النظام (لتفعيل خدمة الموقع).
+  Future<bool> openLocationSettings() async {
+    try {
+      await _channel.invokeMethod<void>('openLocationSettings');
+      return true;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   /// معلومات الواي فاي المتصلة: SSID، BSSID، القوة، والتردد.
   Future<Map<String, dynamic>> wifiInfo() async {
     try {

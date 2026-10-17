@@ -49,6 +49,18 @@ class PermissionService {
     return nearby.isGranted;
   }
 
-  /// يفتح إعدادات التطبيق Allow للمستخدم مراجعة الأذونات.
+  /// هل خدمة الموقع مفعّلة في النظام؟ (شرط مستقل عن الإذن)
+  Future<bool> isLocationServiceEnabled() async {
+    try {
+      final ServiceStatus status =
+          await Permission.locationWhenInUse.serviceStatus;
+      return status.isEnabled;
+    } catch (_) {
+      // لا نحجب المستخدم إذا تعذّر فحص الحالة.
+      return true;
+    }
+  }
+
+  /// يفتح إعدادات التطبيق للمستخدم لمراجعة الأذونات.
   Future<bool> openSettings() => openAppSettings();
 }

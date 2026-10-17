@@ -6,18 +6,32 @@ import '../models/security_type.dart';
 import '../models/wifi_network_item.dart';
 import 'permission_service.dart';
 
-/// خطأ مخصص أثناء فحص الشبكات.
+/// سبب حجب الفحص — يحدد واجهة الشرح المناسبة للمستخدم.
+enum WifiScanBlocker {
+  /// أذونات الموقع/الأجهزة القريبة غير ممنوحة.
+  permissions,
+
+  /// خدمة الموقع في النظام مغلقة (شرط لنتائج الفحص على أندرويد).
+  locationService,
+}
+
+/// خطأ مخصص أثناء فحص الشبكات مع سببه الجذري.
 class WifiScanException implements Exception {
-  const WifiScanException(this.message);
+  const WifiScanException(this.message, {this.blocker});
 
   /// الرسالة العربية.
   final String message;
+
+  /// سبب الحجب إن كان قابلاً للمعالجة من المستخدم.
+  final WifiScanBlocker? blocker;
 
   @override
   String toString() => message;
 }
 
-/// خدمة فحص شبكات الواي فاي القريبة باستخدام حزمة wifi_scan.
+/// خدمة فحص شبكات الواي فاي القريبة الحقيقية عبر حزمة wifi_scan.
+///
+/// تعمل بالكامل دون إنترنت: قراءة نتائج الفحص عملية محلية على الجهاز.
 class WifiScanService {
   WifiScanService(this._permissions);
 
@@ -26,23 +40,53 @@ class WifiScanService {
   /// مهلة انتظار وصول نتائج الفحص عبر البث.
   static const Duration _resultsTimeout = Duration(seconds: 8);
 
-  /// يفحص الشبكات القريبة بعد التأكد من إذن الموقع.
+  /// يفحص الشبكات القريبة فعلياً ويعيد قائمتها مرتبة بالقوة.
+  ///
+  /// يرمي [WifiScanException] مع [WifiScanBlocker] واضح عند وجود عائق
+  /// (أذونات ناقصة أو خدمة موقع مغلقة) بدلاً من إعادة قائمة فارغة.
   Future<List<WifiNetworkItem>> scan() async {
-    final bool granted = await _permissions.requestScanPermissions();
-    if (!granted) {
-      throw const WifiScanException(
-        'يلزم السماح بالوصول إلى الموقع لفحص شبكات الواي فاي القريبة',
-      );
+    // 1) طلب الأذونات أولاً (الموقع + الأجهزة القريبة على أندرويد 13+).
+    await _permissions.requestScanPermissions();
+
+    // 2) سؤال الحزمة نفسها: هل يمكن الحصول على النتائج الآن؟ ولماذا لا؟
+    final CanGetScannedResults can = await WiFiScan.instance
+        .canGetScannedResults(askPermissions: false);
+
+    switch (can) {
+      case CanGetScannedResults.yes:
+        break;
+
+      case CanGetScannedResults.noLocationPermissionRequired:
+      case CanGetScannedResults.noLocationPermissionDenied:
+      case CanGetScannedResults.noLocationPermissionUpgradeAccuracy:
+        throw const WifiScanException(
+          'إذن الوصول إلى الموقع مطلوب لعرض الشبكات القريبة',
+          blocker: WifiScanBlocker.permissions,
+        );
+
+      case CanGetScannedResults.noLocationServiceDisabled:
+        throw const WifiScanException(
+          'خدمة الموقع مغلقة — فعّلها من إعدادات النظام لعرض الشبكات',
+          blocker: WifiScanBlocker.locationService,
+        );
+
+      case CanGetScannedResults.notSupported:
+        throw const WifiScanException(
+          'هذا الجهاز لا يدعم فحص شبكات الواي فاي',
+        );
+
+      case CanGetScannedResults.failed:
+        throw const WifiScanException(
+          'تعذّر بدء الفحص — أعد المحاولة بعد لحظات',
+        );
     }
 
-    final WiFiScan scanner = WiFiScan.instance;
-
-    // نستمع للبث قبل تفعيل الفحص حتى لا نفوّت أول دفعة نتائج.
+    // 3) الاستماع للبث قبل تفعيل الفحص حتى لا نفوّت أول دفعة نتائج.
     final Completer<List<WiFiAccessPoint>> completer =
         Completer<List<WiFiAccessPoint>>();
     StreamSubscription<List<WiFiAccessPoint>>? subscription;
     try {
-      subscription = scanner.onScannedResultsAvailable.listen(
+      subscription = WiFiScan.instance.onScannedResultsAvailable.listen(
         (List<WiFiAccessPoint> results) {
           if (!completer.isCompleted) completer.complete(results);
         },
@@ -56,37 +100,40 @@ class WifiScanService {
 
     List<WiFiAccessPoint> accessPoints;
     try {
-      await scanner.startScan();
+      // قد يفشل التفعيل بسبب حد الفحص (4 مرات/30 ثانية في أندرويد) —
+      // عندها نكتفي بالنتائج المخزّنة من آخر فحص ناجح.
+      await WiFiScan.instance.startScan();
       try {
         accessPoints = await completer.future.timeout(_resultsTimeout);
       } on TimeoutException {
-        // النتائج المخزّنة من آخر فحص ناجح.
-        accessPoints = await scanner.getScannedResults();
+        accessPoints = await WiFiScan.instance.getScannedResults();
       }
     } on TimeoutException {
-      throw const WifiScanException('انتهت مهلة فحص الشبكات، أعد المحاولة');
+      throw const WifiScanException(
+        'انتهت مهلة الفحص — اسحب للأسفل لإعادة المحاولة',
+      );
     } catch (error) {
       throw WifiScanException('تعذّر فحص الشبكات: $error');
     } finally {
       await subscription?.cancel();
     }
 
-    final List<WifiNetworkItem> items = <WifiNetworkItem>[];
-    for (final WiFiAccessPoint network in accessPoints) {
-      items.add(
-        WifiNetworkItem(
-          ssid: network.ssid,
-          bssid: network.bssid,
-          level: network.level,
-          frequency: network.frequency,
-          security: resolveSecurity(network.capabilities),
-        ),
-      );
-    }
+    return _mapAccessPoints(accessPoints);
+  }
 
-    // إزالة التكرار حسب BSSID ثم الترتيب حسب قوة الإشارة.
+  /// يحول نتائج الحزمة إلى نماذج التطبيق مع إزالة التكرار والترتيب بالقوة.
+  static List<WifiNetworkItem> _mapAccessPoints(
+    List<WiFiAccessPoint> accessPoints,
+  ) {
     final Map<String, WifiNetworkItem> unique = <String, WifiNetworkItem>{};
-    for (final WifiNetworkItem item in items) {
+    for (final WiFiAccessPoint network in accessPoints) {
+      final WifiNetworkItem item = WifiNetworkItem(
+        ssid: network.ssid,
+        bssid: network.bssid,
+        level: network.level,
+        frequency: network.frequency,
+        security: resolveSecurity(network.capabilities),
+      );
       final String key = item.bssid.isEmpty ? item.ssid : item.bssid;
       final WifiNetworkItem? existing = unique[key];
       if (existing == null || item.level > existing.level) {
@@ -95,8 +142,9 @@ class WifiScanService {
     }
 
     final List<WifiNetworkItem> sorted = unique.values.toList()
-      ..sort((WifiNetworkItem a, WifiNetworkItem b) => b.level.compareTo(a.level));
-
+      ..sort(
+        (WifiNetworkItem a, WifiNetworkItem b) => b.level.compareTo(a.level),
+      );
     return sorted;
   }
 
@@ -106,8 +154,9 @@ class WifiScanService {
     final String text = capabilities.toUpperCase();
     if (text.isEmpty) return SecurityType.unknown;
 
-    final bool enterprise =
-        text.contains('802.1X') || text.contains('EAP') || text.contains('8021X');
+    final bool enterprise = text.contains('802.1X') ||
+        text.contains('EAP') ||
+        text.contains('8021X');
 
     if (text.contains('WPA3') || text.contains('SAE')) {
       return enterprise ? SecurityType.wpa3Enterprise : SecurityType.wpa3;

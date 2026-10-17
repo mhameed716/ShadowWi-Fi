@@ -1,6 +1,8 @@
 package com.shadowwifi.app
 
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -36,6 +38,7 @@ class MainActivity : FlutterActivity() {
                     "getDnsServers" -> result.success(readDnsServers())
                     "getDeviceInfo" -> result.success(readDeviceInfo())
                     "getWifiInfo" -> result.success(readWifiInfo())
+                    "openLocationSettings" -> result.success(openLocationSettings())
                     else -> result.notImplemented()
                 }
             }
@@ -63,6 +66,16 @@ class MainActivity : FlutterActivity() {
             }
         } catch (error: Exception) {
             null
+        }
+    }
+
+    /** يفتح شاشة إعدادات الموقع في النظام. */
+    private fun openLocationSettings(): Boolean {
+        return try {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            true
+        } catch (error: Exception) {
+            false
         }
     }
 

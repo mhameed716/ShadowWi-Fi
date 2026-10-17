@@ -6,6 +6,7 @@ import '../../../data/models/attempt_log.dart';
 import '../../../data/models/gateway_info.dart';
 import '../../../data/models/security_type.dart';
 import '../../../data/models/wifi_network_item.dart';
+import '../../../data/services/wifi_scan_service.dart';
 import '../../../state/network_attempts_controller.dart';
 import '../../../state/networks_controller.dart';
 import '../../../state/portal_controller.dart';
@@ -56,9 +57,19 @@ class _NetworksScreenState extends State<NetworksScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // عند العودة من إعدادات النظام نعيد قراءة حالة الإذن فوراً.
+    // عند العودة من إعدادات النظام: نعيد قراءة الأذونات، وإن سمح
+    // المستخدم أثناء غيابنا نبدأ الفحص تلقائياً دون أي ضغطة إضافية.
     if (state == AppLifecycleState.resumed) {
-      _controller?.refreshPermissionState();
+      final NetworksController? controller = _controller;
+      if (controller == null) return;
+      controller.refreshPermissionState().then((_) {
+        if (!mounted) return;
+        if (controller.blocker != null &&
+            controller.permission == LocationPermissionState.granted &&
+            !controller.scanning) {
+          controller.scan();
+        }
+      });
     }
   }
 
@@ -123,11 +134,27 @@ class _NetworksScreenState extends State<NetworksScreen>
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             children: <Widget>[
-              const _PermissionBanner(),
-              if (controller.permission !=
-                  LocationPermissionState.permanentlyDenied)
+              // عند نقص الإذن أو وجود عائق: بطاقة معالجة السبب فقط —
+              // لا نعرض «لا توجد شبكات» لأن القائمة الفارغة هنا مضللة.
+              if (controller.blocker != null ||
+                  controller.permission != LocationPermissionState.granted) ...<Widget>[
+                _PermissionBanner(controller: controller),
                 const SizedBox(height: 12),
-              if (controller.scanning && controller.networks.isEmpty)
+                OutlinedButton.icon(
+                  onPressed:
+                      controller.scanning ? null : () => controller.scan(),
+                  icon: controller.scanning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 18),
+                  label: const Text('إعادة المحاولة'),
+                ),
+              ]
+              // الفحص يعمل فعلياً من هنا فصاعداً.
+              else if (controller.scanning && controller.networks.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 48),
                   child: Center(child: CircularProgressIndicator()),
@@ -137,10 +164,10 @@ class _NetworksScreenState extends State<NetworksScreen>
                   padding: const EdgeInsets.only(top: 40),
                   child: EmptyState(
                     icon: Icons.wifi_tethering,
-                    title: 'لا توجد شبكات',
+                    title: 'لا نتائج فحص',
                     message:
-                        'اسحب للأسفل لإعادة الفحص. إن استمرت المشكلة تأكد من '
-                        'تفعيل الواي فاي وخدمة الموقع في الجهاز ثم أعد المحاولة.',
+                        'اكتمل الفحص دون نتائج — تأكد من تفعيل الواي فاي '
+                        'وأنك داخل نطاق شبكات، ثم اسحب للأسفل لإعادة الفحص.',
                     action: FilledButton.icon(
                       onPressed: controller.scan,
                       icon: const Icon(Icons.refresh, size: 18),
@@ -201,38 +228,62 @@ class _NetworksScreenState extends State<NetworksScreen>
   }
 }
 
-/// لافتة أذونات الموقع.
+/// بطاقة معالجة عائق الفحص: أذونات ناقصة، رفض نهائي، أو خدمة موقع مغلقة.
 class _PermissionBanner extends StatelessWidget {
-  const _PermissionBanner();
+  const _PermissionBanner({required this.controller});
+
+  final NetworksController controller;
 
   @override
   Widget build(BuildContext context) {
-    final NetworksController controller = context.watch<NetworksController>();
-    if (controller.permission == LocationPermissionState.granted) {
-      return const SizedBox.shrink();
-    }
-
+    final WifiScanBlocker? blocker = controller.blocker;
     final bool permanently =
         controller.permission == LocationPermissionState.permanentlyDenied;
 
+    final String title;
+    final String subtitle;
+    final IconData icon;
+    final String buttonLabel;
+    final VoidCallback onPressed;
+
+    if (blocker == WifiScanBlocker.locationService) {
+      title = 'خدمة الموقع مغلقة';
+      subtitle = 'نتائج فحص الواي فاي على أندرويد مرتبطة بخدمة الموقع — '
+          'فعّلها من إعدادات النظام ثم اضغط إعادة المحاولة';
+      icon = Icons.location_disabled_outlined;
+      buttonLabel = 'فتح إعدادات الموقع';
+      onPressed = controller.openLocationSettings;
+    } else if (permanently) {
+      title = 'الإذن ممنوع نهائياً';
+      subtitle = 'فعّل إذن الموقع من إعدادات التطبيق ثم عُد واضغط إعادة المحاولة';
+      icon = Icons.block_outlined;
+      buttonLabel = 'فتح إعدادات التطبيق';
+      onPressed = controller.openSettings;
+    } else {
+      title = 'إذن الموقع مطلوب';
+      subtitle = 'يحتاج فحص الشبكات القريبة إلى إذن الموقع — '
+          'ستظهر نافذة السماح عند الضغط على الزر';
+      icon = Icons.location_on_outlined;
+      buttonLabel = 'السماح بالوصول';
+      onPressed = controller.requestPermission;
+    }
+
     return SectionCard(
-      title: permanently ? 'الإذن ممنوع نهائياً' : 'إذن الموقع مطلوب',
-      subtitle: permanently
-          ? 'فعّل إذن الوصول إلى الموقع من إعدادات التطبيق ثم أعد الفحص'
-          : 'يحتاج فحص الشبكات القريبة إلى إذن الوصول إلى الموقع على أندرويد',
-      icon: Icons.location_on_outlined,
+      title: title,
+      subtitle: subtitle,
+      icon: icon,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           FilledButton.icon(
-            onPressed: () => permanently
-                ? controller.openSettings()
-                : controller.requestPermission(),
+            onPressed: onPressed,
             icon: Icon(
-              permanently ? Icons.settings : Icons.my_location,
+              blocker == WifiScanBlocker.locationService
+                  ? Icons.settings_input_antenna
+                  : (permanently ? Icons.settings : Icons.my_location),
               size: 18,
             ),
-            label: Text(permanently ? 'فتح إعدادات التطبيق' : 'السماح بالوصول'),
+            label: Text(buttonLabel),
           ),
         ],
       ),
@@ -399,6 +450,7 @@ class _NetworkSheet extends StatefulWidget {
 
 class _NetworkSheetState extends State<_NetworkSheet> {
   final TextEditingController _codeController = TextEditingController();
+  final TextEditingController _gatewayController = TextEditingController();
   bool _obscure = true;
 
   /// مرجع محفوظ للمتحكم لتفادي قراءة السياق أثناء الإغلاق.
@@ -410,6 +462,7 @@ class _NetworkSheetState extends State<_NetworkSheet> {
     final NetworkAttemptsController controller =
         context.read<NetworkAttemptsController>();
     _attempts = controller;
+    _gatewayController.text = controller.gatewayUrl;
     controller.addListener(_handleChange);
   }
 
@@ -418,6 +471,7 @@ class _NetworkSheetState extends State<_NetworkSheet> {
     _attempts?.removeListener(_handleChange);
     _attempts = null;
     _codeController.dispose();
+    _gatewayController.dispose();
     super.dispose();
   }
 
@@ -526,21 +580,20 @@ class _NetworkSheetState extends State<_NetworkSheet> {
                 ],
                 const SizedBox(height: 14),
 
-                // بوابة البوابة المستهدفة.
-                if (attempts.gatewayUrl.isNotEmpty)
-                  Text(
-                    'بوابة التجربة: ${attempts.gatewayUrl}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textSecondary,
-                      fontFamily: 'monospace',
-                    ),
-                  )
-                else
-                  const Text(
-                    'لم يتم اكتشاف بوابة — افتح تبويب «البوابة» أولاً',
-                    style: TextStyle(fontSize: 12, color: AppColors.warning),
+                // بوابة التجربة — قابلة للتعديل يدوياً ليعمل التبويب
+                // حتى لو فشل الاكتشاف التلقائي أو كان الجهاز بلا إنترنت.
+                TextField(
+                  controller: _gatewayController,
+                  enabled: !attempts.running,
+                  onChanged: attempts.setGateway,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'بوابة التجربة (IP أو رابط)',
+                    hintText: 'http://192.168.1.1',
+                    prefixIcon: Icon(Icons.router_outlined, size: 20),
+                    helperText: 'عادة عنوان بوابة الشبكة — عدّله إذا اختلف',
                   ),
+                ),
                 const SizedBox(height: 16),
 
                 if (attempts.running || attempts.total > 0) ...<Widget>[

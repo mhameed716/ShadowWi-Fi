@@ -97,9 +97,18 @@ class NetworkAttemptsController extends ChangeNotifier {
       return false;
     }
     target = network;
-    gatewayUrl = gateway;
+    if (gateway.isNotEmpty || gatewayUrl.isEmpty) {
+      gatewayUrl = gateway;
+    }
     notifyListeners();
     return true;
+  }
+
+  /// يحدّث بوابة التجربة يدوياً — يجعل التبويب مستقلاً عن الاكتشاف التلقائي.
+  void setGateway(String value) {
+    if (running) return;
+    gatewayUrl = value.trim();
+    notifyListeners();
   }
 
   /// يحدّث الرمز اليدوي.
