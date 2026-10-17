@@ -89,12 +89,22 @@ jobs:
       - name: نشر إصدار برابط تحميل مباشر فريد
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
+        run: set -o pipefail && |
           TAG="v${APK_VERSION}"
           FILE="dist/shadowwifi-v${APK_VERSION}.apk"
-          gh release create "$TAG" "$FILE" \
-            --target "$GITHUB_SHA" \
-            --title "ShadowWi-Fi ${TAG}" \
-            --notes "بناء تلقائي @ ${GITHUB_SHA::7} — تحميل: shadowwifi-v${APK_VERSION}.apk" \
-            --latest
+          NOTES="بناء تلقائي @ ${GITHUB_SHA::7} — تحميل: shadowwifi-v${APK_VERSION}.apk"
+          # ثلاث محاولات مع مهل — يكفي أن تنجح واحدة
+          for attempt in 1 2 3; do
+            if gh release create "$TAG" "$FILE" \
+                 --target "$GITHUB_SHA" \
+                 --title "ShadowWi-Fi ${TAG}" \
+                 --notes "$NOTES" \
+                 --latest 2>&1 | tee publish.log; then
+              break
+            fi
+            echo "محاولة $attempt فشلت — إعادة بعد 15 ثانية..."
+            sleep 15
+            # إن أُنشئ الوسم دون رفع الملف نرفع الملف على الإصدار القائم
+            gh release upload "$TAG" "$FILE" --clobber 2>&1 | tee -a publish.log && break
+          done
           gh release view "$TAG" --json assets --jq '.assets[].name'
