@@ -55,9 +55,20 @@ jobs:
               echo "::error::TAIL|${line:0:700}"
             done
           fi
-          if [ -f ci_test.log ] && grep -qE "failed|Error" ci_test.log; then
-            grep -m 3 -E "\[E\]|Error: " ci_test.log | while IFS= read -r line; do
-              echo "::error::TEST|${line:0:700}"
+          if [ -f ci_test.log ] && grep -qE "\-[0-9]+: " ci_test.log; then
+            # أسماء الاختبارات الفاشلة
+            awk '/ -[0-9]+: .*\[E\]/{print; count++} count>=3{exit}' ci_test.log |
+              while IFS= read -r line; do
+                echo "::error::TEST-NAME|${line:0:700}"
+              done
+            # تفاصيل الفرق المتوقع/الفعلي
+            awk '/Expected:/{found=1} found{print; count++} count>=10{exit}' ci_test.log |
+              while IFS= read -r line; do
+                [ -n "$line" ] && echo "::error::TEST-DIFF|${line:0:700}"
+              done
+            # أخطاء تحميل الملفات
+            grep -m 3 "Failed to load" ci_test.log | while IFS= read -r line; do
+              echo "::error::LOAD|${line:0:700}"
             done
           fi
 
