@@ -13,7 +13,7 @@ class AutoFillControls extends StatelessWidget {
     required this.completed,
     required this.total,
     required this.successCount,
-    required this.currentCode,
+    this.currentCode,
     this.onStart,
     this.onPauseResume,
     this.onCancel,
