@@ -75,7 +75,8 @@ class WifiScanService {
           'هذا الجهاز لا يدعم فحص شبكات الواي فاي',
         );
 
-      case CanGetScannedResults.failed:
+      default:
+        // أي سبب آخر غير مذكور صراحة (مثل failed في إصدارات أحدث).
         throw const WifiScanException(
           'تعذّر بدء الفحص — أعد المحاولة بعد لحظات',
         );
