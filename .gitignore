@@ -17,7 +17,6 @@ pubspec.lock
 # Android
 android/.gradle/
 android/captures/
-android/gradle.properties
 android/local.properties
 android/app/debug/
 android/app/profile/
