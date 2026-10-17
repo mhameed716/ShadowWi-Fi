@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../data/models/attempt_log.dart';
+import '../data/models/wifi_network_item.dart';
 import '../data/services/code_file_service.dart';
 import '../data/services/permission_service.dart';
 import '../data/services/wifi_connect_service.dart';
