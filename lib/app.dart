@@ -49,6 +49,7 @@ class ShadowWifiApp extends StatelessWidget {
         ChangeNotifierProvider<WifiConnectController>(
           create: (BuildContext context) => WifiConnectController(
             service: WifiConnectService(SystemChannel.instance),
+            scanService: WifiScanService(PermissionService.instance),
             logsController: logsController,
           ),
         ),

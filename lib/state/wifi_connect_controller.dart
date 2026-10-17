@@ -4,6 +4,7 @@ import '../data/models/attempt_log.dart';
 import '../data/services/code_file_service.dart';
 import '../data/services/permission_service.dart';
 import '../data/services/wifi_connect_service.dart';
+import '../data/services/wifi_scan_service.dart';
 import 'logs_controller.dart';
 
 /// يدير الاتصال الحقيقي بشبكة واي فاي — كما في تطبيق إعدادات أندرويد.
@@ -19,13 +20,16 @@ class WifiConnectController extends ChangeNotifier {
     required WifiConnectService service,
     LogsController? logsController,
     CodeFileService codeFileService = const CodeFileService(),
+    WifiScanService? scanService,
   })  : _service = service,
         _logsController = logsController,
-        _codeFileService = codeFileService;
+        _codeFileService = codeFileService,
+        _scanService = scanService;
 
   final WifiConnectService _service;
   final LogsController? _logsController;
   final CodeFileService _codeFileService;
+  final WifiScanService? _scanService;
 
   // ------------------------------------------------------------- الهدف
   /// اسم الشبكة المستهدفة.
@@ -347,6 +351,35 @@ class WifiConnectController extends ChangeNotifier {
         isSingle ? AttemptSource.manual : AttemptSource.automatic;
 
     needsSystemFix = false;
+
+    // تدفئة الفحص قبل نافذة النظام: «اختيار جهاز» تعرض شبكات آخر فحص
+    // للنظام فقط — إن كانت الشبكة غائبة عنه ظهرت النافذة فارغة بلا
+    // أجهزة. نفحص من جديد ونتأكد من ظهورها، وإلا نمنع المحاولة برسالة
+    // واضحة بدل إطلاق نافذة محكوم عليها بالفراغ.
+    final WifiScanService? scan = _scanService;
+    if (scan != null) {
+      try {
+        final List<WifiNetworkItem> results = await scan.scan();
+        final bool visible =
+            results.any((WifiNetworkItem item) => item.ssid == ssid);
+        if (!visible) {
+          final String message = 'الشبكة «$ssid» غير ظاهرة في الفحص الحالي — '
+              'قرّب من الراوتر واسحب قائمة الشبكات للتحديث ثم أعد المحاولة';
+          _appendLog(
+            success: false,
+            password: password,
+            message: message,
+            durationMs: stopwatch.elapsedMilliseconds,
+            source: source,
+          );
+          error = message;
+          notifyListeners();
+          return false;
+        }
+      } catch (_) {
+        // الفحص مقيّد زمنياً أو الأذونات لحظياً غير جاهزة — نكمل دون حجب.
+      }
+    }
 
     final SpecifierConnectResult result = await _service.connectViaSpecifier(
       ssid: ssid,
