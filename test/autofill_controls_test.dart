@@ -65,7 +65,13 @@ void main() {
       ),
     );
 
-    final Finder startButton = find.widgetWithText(FilledButton, 'بدء');
+    // ملاحظة: find.widgetWithText(FilledButton, ...) يفشل هنا لأن
+    // FilledButton.icon ينشئ _FilledButtonWithIcon (صفاً فرعياً) والفاحص
+    // يطابق النوع الحرفي فقط — لذا نستخدم byWidgetPredicate مع `is`.
+    final Finder startButton = find.ancestor(
+      of: find.text('بدء'),
+      matching: find.byWidgetPredicate((Widget widget) => widget is FilledButton),
+    );
     expect(startButton, findsOneWidget);
     final FilledButton button = tester.widget<FilledButton>(startButton);
     expect(button.onPressed, isNull);
