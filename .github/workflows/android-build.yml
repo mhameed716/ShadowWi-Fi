@@ -89,7 +89,8 @@ jobs:
       - name: نشر إصدار برابط تحميل مباشر فريد
         env:
           GH_TOKEN: ${{ github.token }}
-        run: set -o pipefail && |
+        run: |
+          set -o pipefail
           TAG="v${APK_VERSION}"
           FILE="dist/shadowwifi-v${APK_VERSION}.apk"
           NOTES="بناء تلقائي @ ${GITHUB_SHA::7} — تحميل: shadowwifi-v${APK_VERSION}.apk"
