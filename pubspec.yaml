@@ -23,7 +23,7 @@ dependencies:
   permission_handler: ^11.3.1
 
   # فحص شبكات الواي فاي القريبة
-  wifi_scan: ^3.0.7
+  wifi_scan: ^0.4.1
 
   # الملفات
   file_picker: ^8.1.4

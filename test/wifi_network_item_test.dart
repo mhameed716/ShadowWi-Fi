@@ -39,8 +39,9 @@ void main() {
           );
 
       expect(build(-40).strengthLabel, 'ممتازة');
-      expect(build(-70).strengthLabel, 'جيدة');
-      expect(build(-85).strengthLabel, 'متوسطة');
+      expect(build(-55).strengthLabel, 'جيدة');
+      expect(build(-70).strengthLabel, 'متوسطة');
+      expect(build(-85).strengthLabel, 'ضعيفة');
       expect(build(-95).strengthLabel, 'ضعيفة');
     });
 

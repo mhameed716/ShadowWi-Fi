@@ -28,7 +28,7 @@ class WifiScanService {
 
   /// يفحص الشبكات القريبة بعد التأكد من إذن الموقع.
   Future<List<WifiNetworkItem>> scan() async {
-    final bool granted = await _permissions.requestLocation();
+    final bool granted = await _permissions.requestScanPermissions();
     if (!granted) {
       throw const WifiScanException(
         'يلزم السماح بالوصول إلى الموقع لفحص شبكات الواي فاي القريبة',

@@ -1,0 +1,65 @@
+name: بناء تطبيق Android (APK)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: بناء نسخة Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: جلب الكود
+        uses: actions/checkout@v4
+
+      - name: تثبيت Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: تثبيت Flutter 3.24.5
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.24.5
+          cache: true
+
+      - name: جلب الحزم
+        run: flutter pub get
+
+      - name: تشغيل الاختبارات
+        run: flutter test
+
+      - name: بناء APK (Release)
+        run: flutter build apk --release
+
+      - name: تجهيز ملف التوزيع
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/shadowwifi-release.apk
+          ls -lh dist/
+
+      - name: رفع الملف كـ Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShadowWi-Fi-APK
+          path: dist/shadowwifi-release.apk
+          if-no-files-found: error
+
+      - name: نشر نسخة برابط تحميل مباشر
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create latest dist/shadowwifi-release.apk \
+            --target "$GITHUB_SHA" \
+            --title "ShadowWi-Fi — أحدث نسخة" \
+            --notes "بناء تلقائي (${GITHUB_REF#refs/heads/} @ ${GITHUB_SHA::7}) — حمّل shadowwifi-release.apk" \
+            --latest || true
+          gh release upload latest dist/shadowwifi-release.apk --clobber
+          gh release view latest --json assets --jq '.assets[].name'

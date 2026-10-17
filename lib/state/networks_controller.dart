@@ -65,9 +65,10 @@ class NetworksController extends ChangeNotifier {
     }
   }
 
-  /// يطلب الإذن مرة أخرى.
+  /// يطلب الأذونات مرة أخرى.
   Future<bool> requestPermission() async {
-    final bool granted = await PermissionService.instance.requestLocation();
+    final bool granted =
+        await PermissionService.instance.requestScanPermissions();
     await refreshPermissionState();
     if (granted) {
       await scan();

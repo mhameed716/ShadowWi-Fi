@@ -31,6 +31,24 @@ class PermissionService {
     return status.isGranted;
   }
 
+  /// يطلب أذونات فحص الشبكات: الموقع + الأجهزة القريبة (أندرويد 13+).
+  Future<bool> requestScanPermissions() async {
+    final Map<Permission, PermissionStatus> results =
+        await <Permission>[
+          Permission.locationWhenInUse,
+          Permission.nearbyWifiDevices,
+        ].request();
+
+    final PermissionStatus location =
+        results[Permission.locationWhenInUse] ?? PermissionStatus.denied;
+    if (location.isGranted) return true;
+
+    // على أندرويد 13+ مع neverForLocation يكفي إذن الأجهزة القريبة.
+    final PermissionStatus nearby =
+        results[Permission.nearbyWifiDevices] ?? PermissionStatus.denied;
+    return nearby.isGranted;
+  }
+
   /// يفتح إعدادات التطبيق Allow للمستخدم مراجعة الأذونات.
   Future<bool> openSettings() => openAppSettings();
 }
