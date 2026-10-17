@@ -1,10 +1,43 @@
-*.iml
-.gradle/
+# Dart / Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
+# IDE
 .idea/
-local.properties
+.vscode/
+*.iml
+*.iws
+
+# Android
+android/.gradle/
+android/captures/
+android/gradle.properties
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties
+*.jks
+*.keystore
+
+# iOS / macOS / web (المشروع مخصص لأندرويد)
+ios/
+macos/
+linux/
+windows/
+web/
+
+# نظام التشغيل
 .DS_Store
-/build/
-app/build/
-captures/
-.externalNativeBuild/
-.cxx/
+Thumbs.db
+
+# ملفات مؤقتة
+*.log
+*.tmp
+coverage/

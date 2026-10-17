@@ -1,0 +1,42 @@
+name: shadow_wifi
+description: "ShadowWi-Fi — أدوات بوابة الشبكة: كشف البوابة الافتراضية، التشخيص، سجل المحاولات، وفحص شبكات الواي فاي القريبة."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # إدارة الحالة
+  provider: ^6.1.2
+
+  # الشبكة والويب
+  http: ^1.2.2
+  connectivity_plus: ^6.1.0
+
+  # الأذونات وواجهة النظام
+  permission_handler: ^11.3.1
+
+  # فحص شبكات الواي فاي القريبة
+  wifi_scan: ^3.0.7
+
+  # الملفات
+  file_picker: ^8.1.4
+  path_provider: ^2.1.4
+  share_plus: ^9.0.0
+  cross_file: ^0.3.4
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ">=3.0.0 <6.0.0"
+
+flutter:
+  uses-material-design: true
