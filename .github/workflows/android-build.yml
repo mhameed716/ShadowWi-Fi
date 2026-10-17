@@ -31,13 +31,25 @@ jobs:
           cache: true
 
       - name: جلب الحزم
-        run: flutter pub get
+        run: set -o pipefail && flutter pub get 2>&1 | tee ci_pubget.log
 
       - name: تشغيل الاختبارات
-        run: flutter test
+        run: set -o pipefail && flutter test 2>&1 | tee ci_test.log
 
       - name: بناء APK (Release)
-        run: flutter build apk --release
+        run: set -o pipefail && flutter build apk --release 2>&1 | tee ci_build.log
+
+      - name: تشخيص أي فشل
+        if: failure()
+        run: |
+          for f in ci_pubget.log ci_test.log ci_build.log; do
+            if [ -f "$f" ]; then
+              echo "=== $f ==="
+              grep -m 40 -iE "because|error|conflict|version solving|failed|exception|not found" "$f" | while IFS= read -r line; do
+                echo "::error::${line:0:800}"
+              done
+            fi
+          done
 
       - name: تجهيز ملف التوزيع
         run: |
