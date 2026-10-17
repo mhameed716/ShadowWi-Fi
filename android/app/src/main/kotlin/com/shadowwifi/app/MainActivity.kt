@@ -3,6 +3,7 @@ package com.shadowwifi.app
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -109,8 +110,9 @@ class MainActivity : FlutterActivity() {
     /**
      * يطلب من النظام اتصالاً فورياً بالشبكة بكلمة المرور ويعيد نتيجة قاطعة.
      *
-     * onAvailable → الكلمة صحيحة والجهاز اقترن فعلاً بالشبكة.
-     * onUnavailable → فشل (كلمة خاطئة أو الشبكة بعيدة) خلال المهلة.
+     * على أندرويد 10+ يعرض النظام نافذة تأكيد للمستخدم — قبولها شرط للنجاح.
+     * نجرّب وضع التشفير المطلوب، وإن فشل نجرّب الوضع المعاكس مرة واحدة
+     * (لشبكات WPA2/WPA3 الانتقالية).
      */
     private fun connectViaSpecifier(
         ssid: String,
@@ -120,116 +122,139 @@ class MainActivity : FlutterActivity() {
     ): Map<String, Any?> {
         val out = mutableMapOf<String, Any?>()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            // مسار الـ Legacy يتولاها connectToWifi.
             out["connected"] = false
             out["unsupported"] = true
+            out["reason"] = "unsupported"
             out["message"] = "المسار الحاسم غير مدعوم قبل أندرويد 10"
             return out
         }
         if (ssid.isBlank()) {
             out["connected"] = false
+            out["reason"] = "error"
             out["message"] = "اسم الشبكة فارغ"
             return out
         }
         if (password.isBlank()) {
             out["connected"] = false
+            out["reason"] = "error"
             out["message"] = "كلمة المرور فارغة"
             return out
         }
         val manager = wifiManager()
         if (manager == null) {
             out["connected"] = false
+            out["reason"] = "error"
             out["message"] = "خدمة الواي فاي غير متاحة"
             return out
         }
         if (!manager.isWifiEnabled) {
             out["connected"] = false
-            out["message"] = "الواي فاي مغلق — فعّله من إعدادات الجهاز"
+            out["reason"] = "wifi_off"
+            out["message"] = "الواي فاي مغلق — فعّله ثم أعد المحاولة"
             return out
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val location = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            if (location != null && !location.isLocationEnabled) {
+                out["connected"] = false
+                out["reason"] = "location_off"
+                out["message"] = "فعّل خدمة الموقع — أندرويد يشترطها لاقتران الواي فاي"
+                return out
+            }
+        }
 
-        return try {
-            val specifier = WifiNetworkSpecifier.Builder()
-                .setSsid(ssid)
-                .apply {
-                    if (useWpa3) setWpa3Passphrase(password)
-                    else setWpa2Passphrase(password)
-                }
-                .build()
+        // وضعان متتاليان: المطلوب ثم المعاكس (شبكات انتقالية WPA2/WPA3).
+        val modes = linkedSetOf(useWpa3, !useWpa3)
+        var connected = false
+        var lastReason = "unavailable"
+        var usedWpa3 = useWpa3
+        for (mode in modes) {
+            val attempt = specifierAttempt(ssid, password, mode, timeoutMs)
+            lastReason = attempt.second
+            if (attempt.first) {
+                connected = true
+                usedWpa3 = mode
+                break
+            }
+        }
+
+        // عند النجاح: حفظ دائم كاقتراح قبل تحرير الشبكة —
+        // عند إلغاء الطلب ينتقل النظام سلساً إلى الاقتراح بنفس الكلمة.
+        if (connected) {
+            try {
+                connectToWifi(ssid, password, usedWpa3)
+            } catch (error: Exception) {
+                // الحفظ الدائم ليس شرطاً لنجاح الاتصال نفسه.
+            }
+        }
+
+        out["connected"] = connected
+        out["reason"] = lastReason
+        out["message"] = if (connected) {
+            "تم الاتصال بالشبكة فعلياً"
+        } else {
+            when (lastReason) {
+                "unavailable" ->
+                    "فشل الاقتران — اضغط «اتصال/السماح» في نافذة تأكيد النظام، " +
+                        "وتأكد من صحة الكلمة وقرب الراوتر"
+                else -> "انتهت المهلة دون اقتران"
+            }
+        }
+        out
+    }
+
+    /** محاولة Specifier واحدة بوضع تشفير محدد — تعيد (نجاح، سبب الفشل). */
+    private fun specifierAttempt(
+        ssid: String,
+        password: String,
+        useWpa3: Boolean,
+        timeoutMs: Int
+    ): Pair<Boolean, String> {
+        var connected = false
+        var reason = "unavailable"
+        val latch = CountDownLatch(1)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                connected = true
+                latch.countDown()
+            }
+
+            override fun onUnavailable() {
+                latch.countDown()
+            }
+
+            override fun onLost(network: Network) {
+                latch.countDown()
+            }
+        }
+
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            val builder = WifiNetworkSpecifier.Builder().setSsid(ssid)
+            if (useWpa3) builder.setWpa3Passphrase(password)
+            else builder.setWpa2Passphrase(password)
 
             val request = NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .setNetworkSpecifier(specifier)
+                .setNetworkSpecifier(builder.build())
                 .build()
 
-            val latch = CountDownLatch(1)
-            var connected = false
-            var failureReason = ""
-
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    connected = true
-                    latch.countDown()
-                }
-
-                override fun onUnavailable() {
-                    failureReason = "unavailable"
-                    latch.countDown()
-                }
-
-                override fun onLost(network: Network) {
-                    // الشبكة انقطعت بعد الاقتران — نعتبرها نجاحاً سابقاً.
-                    latch.countDown()
-                }
-            }
-
-            val connectivityManager =
-                getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val mainHandler = Handler(Looper.getMainLooper())
-
             connectivityManager.requestNetwork(
-                request, callback, mainHandler, timeoutMs
+                request, callback, Handler(Looper.getMainLooper()), timeoutMs
             )
-
-            val released = latch.await(
-                (timeoutMs / 1000L) + 5L, TimeUnit.SECONDS
-            )
-
-            // عند النجاح: حفظ دائم كاقتراح قبل تحرير الشبكة —
-            // عند إلغاء الطلب ينتقل النظام سلساً إلى الاقتراح بنفس الكلمة.
-            if (connected) {
-                try {
-                    connectToWifi(ssid, password, useWpa3)
-                } catch (error: Exception) {
-                    // الحفظ الدائم ليس شرطاً لنجاح الاتصال نفسه.
-                }
-            }
-
-            // إلغاء الطلب وتحرير الشبكة.
+            latch.await((timeoutMs / 1000L) + 5L, TimeUnit.SECONDS)
+        } catch (error: Exception) {
+            reason = "error"
+        } finally {
             try {
                 connectivityManager.unregisterNetworkCallback(callback)
             } catch (error: Exception) {
                 // قد يكون أُلغي تلقائياً بعد onUnavailable.
             }
-
-            out["connected"] = connected
-            out["latchReleased"] = released
-            out["reason"] = failureReason
-            out["message"] = if (connected) {
-                "تم الاتصال بالشبكة فعلياً"
-            } else {
-                when (failureReason) {
-                    "unavailable" -> "فشل الاقتران — الكلمة غير صحيحة أو الشبكة خارج النطاق"
-                    else -> "انتهت المهلة دون اتصال"
-                }
-            }
-            out
-        } catch (error: Exception) {
-            out["connected"] = false
-            out["message"] = "فشل طلب الاتصال: ${error.message}"
-            out
         }
+        return Pair(connected, if (connected) "success" else reason)
     }
 
     // ------------------------------------------------------------------
@@ -339,12 +364,16 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** هل الجهاز متصل فعلياً بالشبكة المطلوبة (BSSID مكتمل + نفس SSID)؟ */
+    /** هل الجهاز متصل فعلياً بالشبكة المطلوبة (اقتران مكتمل + نفس SSID)؟ */
     private fun isConnectedTo(ssid: String): Boolean {
         return try {
             val manager = wifiManager() ?: return false
             val info = manager.connectionInfo ?: return false
             val current = info.ssid?.trim('"') ?: return false
+            // استبعاد الأسماء الوهمية التي يُبقيها النظام بعد الانقطاع.
+            if (current.isBlank() || current == "0x" || current.startsWith("<")) {
+                return false
+            }
             current == ssid && info.supplicantState == SupplicantState.COMPLETED
         } catch (error: Exception) {
             false
@@ -521,19 +550,38 @@ class MainActivity : FlutterActivity() {
         return result
     }
 
-    /** بيانات الواي فاي المتصلة حالياً. */
+    /**
+     * بيانات الواي فاي المتصلة حالياً.
+     *
+     * شرط «متصل فعلاً»: اكتمال الاقتران (COMPLETED) + اسم صالح + عنوان
+     * مادي صالح. بدون هذه البوابة تظهر شبكة وهمية «متصل» بعد انقطاع
+     * الاتصال لأن النظام يُبقي آخر اسم في WifiInfo.
+     */
     private fun readWifiInfo(): Map<String, Any?> {
         val info = mutableMapOf<String, Any?>()
         try {
             val manager = wifiManager()
             val connectionInfo = manager?.connectionInfo ?: return info
 
+            val state = connectionInfo.supplicantState
             val ssid = connectionInfo.ssid?.trim('"')
-            info["ssid"] = if (ssid == "0x" || ssid.isNullOrBlank()) null else ssid
-            info["bssid"] = connectionInfo.bssid
+            val bssid = connectionInfo.bssid
+
+            val ssidValid = !ssid.isNullOrBlank() &&
+                ssid != "0x" && !ssid.startsWith("<")
+            val bssidValid = bssid != null &&
+                bssid.contains(":") && !bssid.startsWith("<") &&
+                bssid != "02:00:00:00:00:00"
+
+            if (state != SupplicantState.COMPLETED || !ssidValid) return info
+            // على الرومات القديمة قد يكون BSSID فارغاً رغم اتصال حقيقي.
+            if (!bssidValid && bssid != null) return info
+
+            info["ssid"] = ssid
+            info["bssid"] = bssid
             info["level"] = connectionInfo.rssi
             info["linkSpeed"] = connectionInfo.linkSpeed
-            info["supplicantState"] = connectionInfo.supplicantState?.name
+            info["supplicantState"] = state.name
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 info["frequency"] = connectionInfo.frequency

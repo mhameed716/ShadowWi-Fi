@@ -72,6 +72,10 @@ class WifiConnectController extends ChangeNotifier {
   /// هل انتهت كل المحاولات دون نجاح؟
   bool exhausted = false;
 
+  /// هل هناك مانع نظامي يمنع الاقتران (الواي فاي/الموقع مغلق)؟
+  /// الواجهة تعرض أزرار الإصلاح المباشر ويتوقف تكرار المحاولات.
+  bool needsSystemFix = false;
+
   /// محاولات الجلسة.
   List<AttemptLog> sessionLogs = <AttemptLog>[];
 
@@ -113,6 +117,7 @@ class WifiConnectController extends ChangeNotifier {
     connected = false;
     connectedSsid = null;
     exhausted = false;
+    needsSystemFix = false;
     completed = 0;
     total = 0;
     currentCode = null;
@@ -178,6 +183,7 @@ class WifiConnectController extends ChangeNotifier {
     connected = false;
     connectedSsid = null;
     exhausted = false;
+    needsSystemFix = false;
     completed = 0;
     total = 1;
     currentCode = password;
@@ -190,7 +196,10 @@ class WifiConnectController extends ChangeNotifier {
     currentCode = null;
     if (!ok && !_cancelRequested) {
       exhausted = true;
-      error = 'فشل الاتصال بهذه الكلمة — تحقق منها أو جرّب الحلقة التلقائية';
+      if (!needsSystemFix) {
+        error =
+            'فشل الاتصال بهذه الكلمة — تحقق منها أو جرّب الحلقة التلقائية';
+      }
     }
     notifyListeners();
   }
@@ -219,6 +228,7 @@ class WifiConnectController extends ChangeNotifier {
     connected = false;
     connectedSsid = null;
     exhausted = false;
+    needsSystemFix = false;
     completed = 0;
     total = codes.length;
     currentCode = null;
@@ -234,19 +244,19 @@ class WifiConnectController extends ChangeNotifier {
       notifyListeners();
 
       final bool ok = await _attempt(code);
-
-      if (ok) {
-        completed = index + 1;
-        notifyListeners();
-        break;
-      }
       completed = index + 1;
       notifyListeners();
+
+      if (ok) break;
+
+      // مانع نظامي (واي فاي/موقع مغلق) — التكرار بلا فائدة حتى الإصلاح،
+      // فنتوقف فوراً ونعرض أزرار الإصلاح بدل استهلاك بقية الرموز.
+      if (needsSystemFix) break;
     }
 
     running = false;
     currentCode = null;
-    if (!connected && !_cancelRequested) {
+    if (!connected && !_cancelRequested && !needsSystemFix) {
       exhausted = true;
       error = 'انتهت كل الرموز دون اتصال — تحقق من ملف الرموز أو نطاق الشبكة';
     }
@@ -280,6 +290,11 @@ class WifiConnectController extends ChangeNotifier {
     await _service.openWifiSettings();
   }
 
+  /// يفتح إعدادات الموقع (الشرط النظامي للاقتران على أندرويد).
+  Future<void> openLocationSettings() async {
+    await _service.openLocationSettings();
+  }
+
   /// يفتح لوحة الواي فاي الرسمية — الاتصال المضمون بضغطة من النظام.
   Future<void> openWifiPanel() async {
     await _service.openWifiPanel();
@@ -298,6 +313,7 @@ class WifiConnectController extends ChangeNotifier {
     connected = false;
     connectedSsid = null;
     exhausted = false;
+    needsSystemFix = false;
     sessionLogs = <AttemptLog>[];
     error = null;
     notifyListeners();
@@ -330,6 +346,8 @@ class WifiConnectController extends ChangeNotifier {
     final AttemptSource source =
         isSingle ? AttemptSource.manual : AttemptSource.automatic;
 
+    needsSystemFix = false;
+
     final SpecifierConnectResult result = await _service.connectViaSpecifier(
       ssid: ssid,
       password: password,
@@ -356,13 +374,22 @@ class WifiConnectController extends ChangeNotifier {
       return true;
     }
 
+    // رسالة دقيقة حسب السبب: نافذة تأكيد النظام، الموقع مغلق، واي فاي مغلق...
+    final String message =
+        WifiConnectService.specifierFailureMessage(result.reason);
     _appendLog(
       success: false,
       password: password,
-      message: result.message ?? 'فشل الاقتران — الكلمة غير صحيحة أو الشبكة بعيدة',
+      message: message,
       durationMs: stopwatch.elapsedMilliseconds,
       source: source,
     );
+
+    if (result.needsSystemFix) {
+      needsSystemFix = true;
+      error = message;
+      notifyListeners();
+    }
     return false;
   }
 

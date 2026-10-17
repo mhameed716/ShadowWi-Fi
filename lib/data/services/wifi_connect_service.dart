@@ -68,7 +68,8 @@ class WifiConnectService {
   /// المحاولة الحاسمة عبر WifiNetworkSpecifier (أندرويد 10+).
   ///
   /// النظام يحاول الاقتران بالشبكة بكلمة المرور ويعيد نتيجة نهائية:
-  /// connected=true يعني اقترنا فعلاً، false يعني فشلاً (كلمة خاطئة/بعيدة).
+  /// connected=true يعني اقترنا فعلاً، false يعني فشلاً مع سبب دقيق
+  /// (واي فاي مغلق / الموقع مغلق / كلمة خاطئة / انتهاء مهلة).
   Future<SpecifierConnectResult> connectViaSpecifier({
     required String ssid,
     required String password,
@@ -85,8 +86,31 @@ class WifiConnectService {
       connected: raw['connected'] == true,
       message: raw['message']?.toString(),
       unsupported: raw['unsupported'] == true,
+      reason: raw['reason']?.toString(),
     );
   }
+
+  /// رسالة عربية دقيقة حسب سبب فشل الاقتران.
+  static String specifierFailureMessage(String? reason) {
+    switch (reason) {
+      case 'wifi_off':
+        return 'الواي فاي مغلق — فعّله ثم أعد المحاولة';
+      case 'location_off':
+        return 'خدمة الموقع مغلقة — أندرويد يشترطها لاقتران الواي فاي';
+      case 'timeout':
+        return 'انتهت المهلة دون اقتران — تأكد من قرب الراوتر وقوة إشارته';
+      case 'error':
+        return 'تعذّر تنفيذ طلب الاقتران على هذا الجهاز';
+      case 'unsupported':
+        return 'هذا الجهاز لا يدعم المسار الحاسم — جُرِّب المسار البديل';
+      default:
+        return 'لم يتم الاقتران — إذا ظهرت نافذة تأكيد من النظام اختر '
+            'الشبكة واضغط «اتصال»، وتأكد من صحة كلمة المرور';
+    }
+  }
+
+  /// يفتح إعدادات الموقع (لتفعيل خدمة الموقع المطلوبة للاقتران).
+  Future<bool> openLocationSettings() => _system.openLocationSettings();
 
   /// يطلب من المنصة الاتصال/حفظ الشبكة (اقتراح على 10+، كامل على 9-).
   Future<WifiConnectResult> connect({
@@ -126,6 +150,7 @@ class SpecifierConnectResult {
     required this.connected,
     this.message,
     this.unsupported = false,
+    this.reason,
   });
 
   /// هل تم الاقتران بالشبكة فعلاً؟
@@ -136,4 +161,12 @@ class SpecifierConnectResult {
 
   /// المسار غير مدعوم على هذه المنصة (أندرويد 9-).
   final bool unsupported;
+
+  /// سبب الفشل الدقيق: wifi_off/location_off/timeout/error/unavailable.
+  final String? reason;
+
+  /// هل السبب نظامي يُصلَح من الإعدادات (الواي فاي أو الموقع مغلق)؟
+  /// في هذه الحالة إعادة المحاولة بلا فائدة حتى يُرفع المانع.
+  bool get needsSystemFix =>
+      reason == 'wifi_off' || reason == 'location_off';
 }

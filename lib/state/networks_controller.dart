@@ -49,6 +49,17 @@ class NetworksController extends ChangeNotifier {
 
   /// يعيد قراءة بيانات الشبكة المتصلة من النظام.
   Future<void> refreshCurrentWifi() async {
+    await _readCurrentWifi();
+    // قراءة تأكيدية ثانية إن لم تظهر شبكة — حالة الاقتران قد تحتاج لحظة
+    // لتنتشر بعد نجاح اتصال جديد، وهذه القراءة الثانية تمنع بطاقة قديمة.
+    final String? ssid = currentWifi['ssid']?.toString();
+    if (ssid == null || ssid.isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      await _readCurrentWifi();
+    }
+  }
+
+  Future<void> _readCurrentWifi() async {
     try {
       final Map<String, dynamic> info =
           await SystemChannel.instance.wifiInfo();

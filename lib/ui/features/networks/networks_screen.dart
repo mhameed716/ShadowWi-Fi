@@ -783,7 +783,8 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                         Expanded(
                           child: Text(
                             'جارٍ الاقتران بـ ${wifi.ssid}...'
-                            '\nالنتيجة قاطعة خلال ~25 ثانية',
+                            '\nإذا ظهرت نافذة تأكيد من النظام اختر الشبكة '
+                            'واضغط «اتصال» — النتيجة قاطعة خلال ~25 ثانية',
                             style: const TextStyle(
                               fontSize: 12,
                               height: 1.5,
@@ -905,6 +906,31 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                           color: AppColors.primaryLight,
                         ),
                       ),
+                    ),
+                  ],
+                  if (wifi.needsSystemFix) ...<Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        wifi.error ?? 'هناك مانع يمنع الاقتران الآن',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: AppColors.warning,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: wifi.openLocationSettings,
+                      icon: const Icon(Icons.location_on_outlined, size: 18),
+                      label: const Text('فتح إعدادات الموقع'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: wifi.openWifiPanel,
+                      icon: const Icon(Icons.wifi, size: 18),
+                      label: const Text('الاتصال عبر النظام (مضمون)'),
                     ),
                   ],
                 ],

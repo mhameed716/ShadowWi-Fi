@@ -75,4 +75,42 @@ void main() {
       expect(controller.progress, 0);
     });
   });
+
+  group('رسائل فشل الاقتران الحاسم', () {
+    test('واي فاي مغلق', () {
+      final message = WifiConnectService.specifierFailureMessage('wifi_off');
+      expect(message, contains('الواي فاي مغلق'));
+      expect(message, contains('فعّله'));
+    });
+
+    test('خدمة الموقع مغلقة', () {
+      final message =
+          WifiConnectService.specifierFailureMessage('location_off');
+      expect(message, contains('الموقع'));
+    });
+
+    test('انتهاء المهلة', () {
+      final message = WifiConnectService.specifierFailureMessage('timeout');
+      expect(message, contains('المهلة'));
+    });
+
+    test('السبب المجهول يشرح نافذة تأكيد النظام', () {
+      final message =
+          WifiConnectService.specifierFailureMessage('unavailable');
+      expect(message, contains('نافذة تأكيد'));
+      expect(message, contains('كلمة المرور'));
+    });
+
+    test('needsSystemFix يميّز الأسباب النظامية', () {
+      const wifiOff =
+          SpecifierConnectResult(connected: false, reason: 'wifi_off');
+      const locationOff =
+          SpecifierConnectResult(connected: false, reason: 'location_off');
+      const plain =
+          SpecifierConnectResult(connected: false, reason: 'unavailable');
+      expect(wifiOff.needsSystemFix, isTrue);
+      expect(locationOff.needsSystemFix, isTrue);
+      expect(plain.needsSystemFix, isFalse);
+    });
+  });
 }
