@@ -45,12 +45,14 @@ jobs:
           for f in ci_pubget.log ci_test.log ci_build.log; do
             if [ -f "$f" ]; then
               echo "=== $f ==="
-              {
-                grep -m 5 -B1 -A 12 "What went wrong" "$f"
-                grep -m 10 -B1 -A 4 "Execution failed for task" "$f"
-                grep -m 20 -iE "^.*(error|exception|because|version solving|conflict|not found|failed).*" "$f" | head -25
-              } | sort -u | while IFS= read -r line; do
-                echo "::error::${line:0:800}"
+              # القسم الكامل بعد "* What went wrong:"
+              awk '/\* What went wrong:/{flag=1} flag{print; count++} count>45{exit}' "$f" |
+                while IFS= read -r line; do
+                  [ -n "$line" ] && echo "::error::${line:0:800}"
+                done
+              # آخر 20 سطراً من السجل (ملخص الفشل)
+              tail -n 20 "$f" | while IFS= read -r line; do
+                [ -n "$line" ] && echo "::error::TAIL|${line:0:700}"
               done
             fi
           done

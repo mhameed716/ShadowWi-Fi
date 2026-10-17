@@ -12,6 +12,17 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// إجبار كل وحدات الإضافات على الترجمة مقابل compileSdk 35
+// لأن بعض تبعيات androidx الحديثة (مثل androidx.annotation:1.9.1 القادمة من
+// file_picker) تطلب ذلك، بينما تعتمد الإضافات على قيمة Flutter الافتراضية الأقدم.
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            project.android.compileSdk = 35
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
