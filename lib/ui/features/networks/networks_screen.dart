@@ -782,9 +782,12 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'جارٍ الاقتران بـ ${wifi.ssid}...'
-                            '\nإذا ظهرت نافذة تأكيد من النظام اختر الشبكة '
-                            'واضغط «اتصال» — النتيجة قاطعة خلال ~25 ثانية',
+                            wifi.total <= 1
+                                ? 'جارٍ الاقتران بـ ${wifi.ssid}...'
+                                    '\nستظهر نافذة النظام «اختيار جهاز» — '
+                                    'اضغط على اسم شبكتك داخلها ثم اقبل'
+                                : 'جارٍ التجربة التلقائية على ${wifi.ssid}...'
+                                    '\nاقتراحات صامتة — دون نوافذ لكل رمز',
                             style: const TextStyle(
                               fontSize: 12,
                               height: 1.5,
@@ -823,6 +826,19 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'عند الاتصال ستنبثق نافذة النظام «اختيار جهاز» — '
+                      'اضغط على اسم الشبكة داخلها للموافقة',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.4,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
                   FilledButton.icon(
                     onPressed:
                         wifi.canConnect ? () => wifi.connectOnce() : null,

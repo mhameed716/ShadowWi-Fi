@@ -38,7 +38,7 @@ class WifiConnectService {
   final SystemChannel _system;
 
   /// مهلة انتظار تأكيد الاتصال بعد كل محاولة.
-  static const Duration connectTimeout = Duration(seconds: 30);
+  static const Duration connectTimeout = Duration(seconds: 20);
 
   /// الفاصل بين استعلامات حالة الاتصال.
   static const Duration pollInterval = Duration(seconds: 2);
@@ -99,6 +99,9 @@ class WifiConnectService {
         return 'خدمة الموقع مغلقة — أندرويد يشترطها لاقتران الواي فاي';
       case 'timeout':
         return 'انتهت المهلة دون اقتران — تأكد من قرب الراوتر وقوة إشارته';
+      case 'declined':
+        return 'أُلغيت نافذة النظام «اختيار جهاز» — أعد المحاولة واضغط على '
+            'اسم شبكتك داخلها ثم اقبل';
       case 'error':
         return 'تعذّر تنفيذ طلب الاقتران على هذا الجهاز';
       case 'unsupported':

@@ -94,6 +94,12 @@ void main() {
       expect(message, contains('المهلة'));
     });
 
+    test('إلغاء نافذة اختيار جهاز يشرح ما حدث', () {
+      final message = WifiConnectService.specifierFailureMessage('declined');
+      expect(message, contains('اختيار جهاز'));
+      expect(message, contains('أعد المحاولة'));
+    });
+
     test('السبب المجهول يشرح نافذة تأكيد النظام', () {
       final message =
           WifiConnectService.specifierFailureMessage('unavailable');

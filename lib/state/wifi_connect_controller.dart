@@ -323,18 +323,18 @@ class WifiConnectController extends ChangeNotifier {
 
   /// ينفّذ محاولة اتصال حقيقية واحدة ويعيد النتيجة.
   ///
-  /// أندرويد 10+: مسار WifiNetworkSpecifier — نتيجة قاطعة من النظام
-  /// (نجح = اقترنا فعلاً / فشل = كلمة خاطئة أو بعيدة). عند النجاح تُحفظ
-  /// الشبكة كاقتراح ليبقى الاتصال دائماً.
-  /// أندرويد 9-: مسار WifiConfiguration الكامل مع استقصاء الحالة.
+  /// محاولة يدوية (أندرويد 10+): مسار WifiNetworkSpecifier — نتيجة قاطعة
+  /// مع نافذة النظام «اختيار جهاز» مرة واحدة، مقبولة للمستخدم.
+  /// الحلقة التلقائية (كل الأنظمة): مسار الاقتراحات/الإعداد الصامت —
+  /// بلا نوافذ نظام لكل رمز، والنتيجة تُستقصى من حالة الاتصال الفعلية.
   Future<bool> _attempt(String password, {bool isSingle = false}) async {
     final Stopwatch stopwatch = Stopwatch()..start();
 
     final int sdk = await _service.sdkVersion();
-    if (sdk >= 29) {
+    if (sdk >= 29 && isSingle) {
       return _attemptSpecifier(password, isSingle: isSingle, stopwatch: stopwatch);
     }
-    return _attemptLegacy(password, isSingle: isSingle, stopwatch: stopwatch);
+    return _attemptPersistent(password, isSingle: isSingle, stopwatch: stopwatch);
   }
 
   /// المسار الحاسم (أندرويد 10+).
@@ -357,7 +357,7 @@ class WifiConnectController extends ChangeNotifier {
 
     if (result.unsupported) {
       // أجهزة نادرة لا تدعم المسار — نرجع للاقتراح + الاستقصاء.
-      return _attemptLegacy(password, isSingle: isSingle, stopwatch: stopwatch);
+      return _attemptPersistent(password, isSingle: isSingle, stopwatch: stopwatch);
     }
 
     if (result.connected) {
@@ -385,7 +385,8 @@ class WifiConnectController extends ChangeNotifier {
       source: source,
     );
 
-    if (result.needsSystemFix) {
+    if (result.needsSystemFix || result.reason == 'declined') {
+      // واي فاي/موقع مغلق أو أُلغيت نافذة النظام — التكرار بلا فائدة الآن.
       needsSystemFix = true;
       error = message;
       notifyListeners();
@@ -393,8 +394,8 @@ class WifiConnectController extends ChangeNotifier {
     return false;
   }
 
-  /// المسار التقليدي (أندرويد 9-) مع استقصاء الحالة.
-  Future<bool> _attemptLegacy(
+  /// المسار الصامت مع استقصاء الحالة: اقتراح على 10+ وإعداد كامل على 9-.
+  Future<bool> _attemptPersistent(
     String password, {
     required bool isSingle,
     required Stopwatch stopwatch,

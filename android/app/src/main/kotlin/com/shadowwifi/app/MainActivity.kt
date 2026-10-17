@@ -17,6 +17,7 @@ import android.net.wifi.WifiNetworkSuggestion
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -169,11 +170,18 @@ class MainActivity : FlutterActivity() {
         var lastReason = "unavailable"
         var usedWpa3 = useWpa3
         for (mode in modes) {
+            val started = SystemClock.elapsedRealtime()
             val attempt = specifierAttempt(ssid, password, mode, timeoutMs)
             lastReason = attempt.second
             if (attempt.first) {
                 connected = true
                 usedWpa3 = mode
+                break
+            }
+            // رفض سريع = أُغلقت نافذة «اختيار جهاز» — لا نفتحها مرة ثانية
+            // فوراً (إزعاج مزدوج)؛ المستخدم يعيد المحاولة عندما يرغب.
+            if (SystemClock.elapsedRealtime() - started < 6000L) {
+                lastReason = "declined"
                 break
             }
         }
@@ -194,9 +202,11 @@ class MainActivity : FlutterActivity() {
             "تم الاتصال بالشبكة فعلياً"
         } else {
             when (lastReason) {
+                "declined" ->
+                    "أُلغيت نافذة «اختيار جهاز» — أعد المحاولة واضغط على اسم " +
+                        "شبكتك داخلها ثم اقبل"
                 "unavailable" ->
-                    "فشل الاقتران — اضغط «اتصال/السماح» في نافذة تأكيد النظام، " +
-                        "وتأكد من صحة الكلمة وقرب الراوتر"
+                    "فشل الاقتران — تأكد من صحة الكلمة وقرب الراوتر"
                 else -> "انتهت المهلة دون اقتران"
             }
         }
