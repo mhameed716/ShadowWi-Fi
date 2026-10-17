@@ -7,7 +7,7 @@ void main() {
     test('الشبكة المخفية تحصل على اسم بديل', () {
       const WifiNetworkItem item = WifiNetworkItem(
         ssid: '   ',
-        bsid: 'aa:bb:cc:dd:ee:ff',
+        bssid: 'aa:bb:cc:dd:ee:ff',
         level: -60,
         frequency: 2412,
         security: SecurityType.wpa2,
@@ -18,7 +18,7 @@ void main() {
     test('نسبة القوة محصورة بين 0 و1', () {
       WifiNetworkItem build(int level) => WifiNetworkItem(
             ssid: 'Test',
-            bsid: 'x',
+            bssid: 'x',
             level: level,
             frequency: 2412,
             security: SecurityType.wpa2,
@@ -32,7 +32,7 @@ void main() {
     test('وصف القوة بالعربية', () {
       WifiNetworkItem build(int level) => WifiNetworkItem(
             ssid: 'Test',
-            bsid: 'x',
+            bssid: 'x',
             level: level,
             frequency: 2412,
             security: SecurityType.wpa2,
@@ -48,7 +48,7 @@ void main() {
     test('نطاق التردد', () {
       WifiNetworkItem build(int frequency) => WifiNetworkItem(
             ssid: 'Test',
-            bsid: 'x',
+            bssid: 'x',
             level: -50,
             frequency: frequency,
             security: SecurityType.wpa3,
