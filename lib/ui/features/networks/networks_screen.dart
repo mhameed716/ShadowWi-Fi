@@ -782,8 +782,8 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'جارٍ الاتصال بـ ${wifi.ssid}...'
-                            '\nقد يستغرق التأكيد حتى 15 ثانية',
+                            'جارٍ الاقتران بـ ${wifi.ssid}...'
+                            '\nالنتيجة قاطعة خلال ~25 ثانية',
                             style: const TextStyle(
                               fontSize: 12,
                               height: 1.5,
@@ -827,6 +827,11 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                         wifi.canConnect ? () => wifi.connectOnce() : null,
                     icon: const Icon(Icons.wifi, size: 18),
                     label: const Text('اتصال'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: wifi.openWifiPanel,
+                    icon: const Icon(Icons.tune, size: 18),
+                    label: const Text('الاتصال عبر النظام (مضمون)'),
                   ),
 
                   const SizedBox(height: 6),
@@ -891,8 +896,8 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Text(
-                        'لم تنجح المحاولة — على أندرويد 10+ قد يطلب النظام '
-                        'تأكيد الاقتراح من إعدادات الواي فاي',
+                        'فشل الاقتران بالرموز المُجرَّبة — الكلمة غير موجودة '
+                        'في الملف أو الشبكة خارج النطاق الآن',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 12,
@@ -900,11 +905,6 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                           color: AppColors.primaryLight,
                         ),
                       ),
-                    ),
-                    TextButton.icon(
-                      onPressed: wifi.openWifiSettings,
-                      icon: const Icon(Icons.settings, size: 16),
-                      label: const Text('فتح إعدادات الواي فاي'),
                     ),
                   ],
                 ],

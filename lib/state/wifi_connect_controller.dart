@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/models/attempt_log.dart';
 import '../data/services/code_file_service.dart';
+import '../data/services/permission_service.dart';
 import '../data/services/wifi_connect_service.dart';
 import 'logs_controller.dart';
 
@@ -167,6 +168,10 @@ class WifiConnectController extends ChangeNotifier {
       return;
     }
 
+    // الأذونات اللازمة للاتصال (الموقع + الأجهزة القريبة على 13+) —
+    // تُطلب تلقائياً إن لم تكن ممنوحة.
+    await PermissionService.instance.requestScanPermissions();
+
     running = true;
     _cancelRequested = false;
     paused = false;
@@ -204,6 +209,9 @@ class WifiConnectController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // الأذونات اللازمة للحلقة التلقائية.
+    await PermissionService.instance.requestScanPermissions();
 
     running = true;
     _cancelRequested = false;
@@ -267,9 +275,14 @@ class WifiConnectController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// يفتح إعدادات الواي فاي في النظام (لتأكيد الاقتراحات على أندرويد 10+).
+  /// يفتح إعدادات الواي فاي في النظام.
   Future<void> openWifiSettings() async {
     await _service.openWifiSettings();
+  }
+
+  /// يفتح لوحة الواي فاي الرسمية — الاتصال المضمون بضغطة من النظام.
+  Future<void> openWifiPanel() async {
+    await _service.openWifiPanel();
   }
 
   /// يصفّر الحالة بعد إغلاق النافذة (إن لم يكن هناك عمل جارٍ).
@@ -292,9 +305,75 @@ class WifiConnectController extends ChangeNotifier {
 
   // ------------------------------------------------------------- الداخلية
 
-  /// ينفّذ محاولة اتصال حقيقية واحدة وينتظر تأكيد الحالة.
+  /// ينفّذ محاولة اتصال حقيقية واحدة ويعيد النتيجة.
+  ///
+  /// أندرويد 10+: مسار WifiNetworkSpecifier — نتيجة قاطعة من النظام
+  /// (نجح = اقترنا فعلاً / فشل = كلمة خاطئة أو بعيدة). عند النجاح تُحفظ
+  /// الشبكة كاقتراح ليبقى الاتصال دائماً.
+  /// أندرويد 9-: مسار WifiConfiguration الكامل مع استقصاء الحالة.
   Future<bool> _attempt(String password, {bool isSingle = false}) async {
     final Stopwatch stopwatch = Stopwatch()..start();
+
+    final int sdk = await _service.sdkVersion();
+    if (sdk >= 29) {
+      return _attemptSpecifier(password, isSingle: isSingle, stopwatch: stopwatch);
+    }
+    return _attemptLegacy(password, isSingle: isSingle, stopwatch: stopwatch);
+  }
+
+  /// المسار الحاسم (أندرويد 10+).
+  Future<bool> _attemptSpecifier(
+    String password, {
+    required bool isSingle,
+    required Stopwatch stopwatch,
+  }) async {
+    final AttemptSource source =
+        isSingle ? AttemptSource.manual : AttemptSource.automatic;
+
+    final SpecifierConnectResult result = await _service.connectViaSpecifier(
+      ssid: ssid,
+      password: password,
+      wpa3: wpa3,
+      timeoutMs: 25000,
+    );
+
+    if (result.unsupported) {
+      // أجهزة نادرة لا تدعم المسار — نرجع للاقتراح + الاستقصاء.
+      return _attemptLegacy(password, isSingle: isSingle, stopwatch: stopwatch);
+    }
+
+    if (result.connected) {
+      // المنصة حفظت الشبكة كاقتراح قبل تحرير الاتصال — انتقال سلس.
+      _appendLog(
+        success: true,
+        password: password,
+        message: 'تم الاتصال بالشبكة فعلياً وحُفظت',
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: source,
+      );
+      connected = true;
+      connectedSsid = ssid;
+      return true;
+    }
+
+    _appendLog(
+      success: false,
+      password: password,
+      message: result.message ?? 'فشل الاقتران — الكلمة غير صحيحة أو الشبكة بعيدة',
+      durationMs: stopwatch.elapsedMilliseconds,
+      source: source,
+    );
+    return false;
+  }
+
+  /// المسار التقليدي (أندرويد 9-) مع استقصاء الحالة.
+  Future<bool> _attemptLegacy(
+    String password, {
+    required bool isSingle,
+    required Stopwatch stopwatch,
+  }) async {
+    final AttemptSource source =
+        isSingle ? AttemptSource.manual : AttemptSource.automatic;
 
     final WifiConnectResult result = await _service.connect(
       ssid: ssid,
@@ -357,11 +436,9 @@ class WifiConnectController extends ChangeNotifier {
     _appendLog(
       success: false,
       password: password,
-      message: result.isLegacy
-          ? 'لم يتم الاتصال — الكلمة غير صحيحة أو الشبكة بعيدة'
-          : 'لم يؤكد النظام الاتصال — قد يحتاج تأكيداً من إعدادات الواي فاي',
+      message: 'لم يتم الاتصال — الكلمة غير صحيحة أو الشبكة بعيدة',
       durationMs: stopwatch.elapsedMilliseconds,
-      source: isSingle ? AttemptSource.manual : AttemptSource.automatic,
+      source: source,
     );
     return false;
   }

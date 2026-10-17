@@ -6,37 +6,44 @@ import android.provider.Settings
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.SupplicantState
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
+import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.WifiNetworkSuggestion
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * النشاط الرئيسي للتطبيق.
  *
- * يوفّر قناة نظامية "com.shadowwifi.app/system" بقدرات لا تتوفر عبر إضافات
- * Flutter: البوابة الافتراضية، خوادم DNS، عناوين الجهاز، بيانات الواي فاي
- * المتصلة، و**الاتصال الحقيقي بشبكة واي فاي بكلمة مرور** كما يفعل تطبيق
- * إعدادات أندرويد:
+ * قناة النظام "com.shadowwifi.app/system":
  *
- * - أندرويد 9 فما قبل (API < 29): [WifiConfiguration] مع
+ * الاتصال الحقيقي بالواي فاي:
+ * - أندرويد 10+ (مسار Specifier): [ConnectivityManager.requestNetwork] مع
+ *   [WifiNetworkSpecifier] — يطلب من النظام اتصالاً فورياً بتلك الشبكة
+ *   بتلك الكلمة ويعيد نتيجة قاطعة (onAvailable = نجح / onUnavailable = فشل).
+ * - أندرويد 9- (مسار Legacy): [WifiConfiguration] مع
  *   addNetwork/enableNetwork/reconnect — اتصال برمجي كامل.
- * - أندرويد 10+ (API 29+): [WifiNetworkSuggestion] — تقديم اقتراح الشبكة
- *   بكلمة المرور ليتولى النظام الاتصال (سياسة جوجل: لا اتصال صامت
- *   لتطبيقات الجهات الخارجية على أندرويد 10+).
+ * - حفظ دائم: [WifiNetworkSuggestion] بعد نجاح الـ Specifier.
+ * - بديل مضمون: [Settings.Panel.ACTION_WIFI] — لوحة النظام الرسمية.
  */
 class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
 
     /** آخر اقتراح شبكة قدّمناه — لحذفه بدقة عند "نسيان" الشبكة. */
-    private var lastSuggestions: WifiNetworkSuggestion? = null
+    private var lastSuggestion: WifiNetworkSuggestion? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -53,6 +60,19 @@ class MainActivity : FlutterActivity() {
                     "getWifiInfo" -> result.success(readWifiInfo())
                     "openLocationSettings" -> result.success(openLocationSettings())
                     "openWifiSettings" -> result.success(openWifiSettings())
+                    "openWifiPanel" -> result.success(openWifiPanel())
+                    "connectViaSpecifier" -> {
+                        val ssid = call.argument<String>("ssid") ?: ""
+                        val password = call.argument<String>("password") ?: ""
+                        val wpa3 = call.argument<Boolean>("wpa3") ?: false
+                        val timeoutMs = call.argument<Int>("timeoutMs") ?: 25000
+                        // الانتظار على خيط خلفي — ردود NetworkCallback تُسلَّم
+                        // على الخيط الرئيسي، وحجبه سيسبب توقفاً تاماً.
+                        Thread {
+                            val res = connectViaSpecifier(ssid, password, wpa3, timeoutMs)
+                            runOnUiThread { result.success(res) }
+                        }.start()
+                    }
                     "connectToWifi" -> {
                         val ssid = call.argument<String>("ssid") ?: ""
                         val password = call.argument<String>("password") ?: ""
@@ -83,13 +103,144 @@ class MainActivity : FlutterActivity() {
         applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
 
     // ------------------------------------------------------------------
-    // الاتصال الحقيقي بشبكة واي فاي
+    // المسار الحقيقي الحاسم — أندرويد 10+ عبر WifiNetworkSpecifier
     // ------------------------------------------------------------------
 
     /**
-     * يحاول الاتصال بشبكة WPA2/WPA3 بكلمة مرور.
+     * يطلب من النظام اتصالاً فورياً بالشبكة بكلمة المرور ويعيد نتيجة قاطعة.
      *
-     * يعيد خريطة: mode = legacy | suggestion | error مع رسالة عربية.
+     * onAvailable → الكلمة صحيحة والجهاز اقترن فعلاً بالشبكة.
+     * onUnavailable → فشل (كلمة خاطئة أو الشبكة بعيدة) خلال المهلة.
+     */
+    private fun connectViaSpecifier(
+        ssid: String,
+        password: String,
+        useWpa3: Boolean,
+        timeoutMs: Int
+    ): Map<String, Any?> {
+        val out = mutableMapOf<String, Any?>()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // مسار الـ Legacy يتولاها connectToWifi.
+            out["connected"] = false
+            out["unsupported"] = true
+            out["message"] = "المسار الحاسم غير مدعوم قبل أندرويد 10"
+            return out
+        }
+        if (ssid.isBlank()) {
+            out["connected"] = false
+            out["message"] = "اسم الشبكة فارغ"
+            return out
+        }
+        if (password.isBlank()) {
+            out["connected"] = false
+            out["message"] = "كلمة المرور فارغة"
+            return out
+        }
+        val manager = wifiManager()
+        if (manager == null) {
+            out["connected"] = false
+            out["message"] = "خدمة الواي فاي غير متاحة"
+            return out
+        }
+        if (!manager.isWifiEnabled) {
+            out["connected"] = false
+            out["message"] = "الواي فاي مغلق — فعّله من إعدادات الجهاز"
+            return out
+        }
+
+        return try {
+            val specifier = WifiNetworkSpecifier.Builder()
+                .setSsid(ssid)
+                .apply {
+                    if (useWpa3) setWpa3Passphrase(password)
+                    else setWpa2Passphrase(password)
+                }
+                .build()
+
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .setNetworkSpecifier(specifier)
+                .build()
+
+            val latch = CountDownLatch(1)
+            var connected = false
+            var failureReason = ""
+
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    connected = true
+                    latch.countDown()
+                }
+
+                override fun onUnavailable() {
+                    failureReason = "unavailable"
+                    latch.countDown()
+                }
+
+                override fun onLost(network: Network) {
+                    // الشبكة انقطعت بعد الاقتران — نعتبرها نجاحاً سابقاً.
+                    latch.countDown()
+                }
+            }
+
+            val connectivityManager =
+                getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val mainHandler = Handler(Looper.getMainLooper())
+
+            connectivityManager.requestNetwork(
+                request, callback, mainHandler, timeoutMs
+            )
+
+            val released = latch.await(
+                (timeoutMs / 1000L) + 5L, TimeUnit.SECONDS
+            )
+
+            // عند النجاح: حفظ دائم كاقتراح قبل تحرير الشبكة —
+            // عند إلغاء الطلب ينتقل النظام سلساً إلى الاقتراح بنفس الكلمة.
+            if (connected) {
+                try {
+                    connectToWifi(ssid, password, useWpa3)
+                } catch (error: Exception) {
+                    // الحفظ الدائم ليس شرطاً لنجاح الاتصال نفسه.
+                }
+            }
+
+            // إلغاء الطلب وتحرير الشبكة.
+            try {
+                connectivityManager.unregisterNetworkCallback(callback)
+            } catch (error: Exception) {
+                // قد يكون أُلغي تلقائياً بعد onUnavailable.
+            }
+
+            out["connected"] = connected
+            out["latchReleased"] = released
+            out["reason"] = failureReason
+            out["message"] = if (connected) {
+                "تم الاتصال بالشبكة فعلياً"
+            } else {
+                when (failureReason) {
+                    "unavailable" -> "فشل الاقتران — الكلمة غير صحيحة أو الشبكة خارج النطاق"
+                    else -> "انتهت المهلة دون اتصال"
+                }
+            }
+            out
+        } catch (error: Exception) {
+            out["connected"] = false
+            out["message"] = "فشل طلب الاتصال: ${error.message}"
+            out
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // الاتصال الدائم — اقتراح الشبكة (أندرويد 10+) / الإعداد الكامل (9-)
+    // ------------------------------------------------------------------
+
+    /**
+     * يحاول الاتصال/حفظ الشبكة:
+     * - أندرويد 10+: تقديم اقتراح دائم (يتصل النظام به عند التواجد في النطاق)
+     *   مع تحفيز فحص فوري لتسريع الاقتران.
+     * - أندرويد 9-: اتصال برمجي كامل فوري.
      */
     private fun connectToWifi(
         ssid: String,
@@ -114,31 +265,36 @@ class MainActivity : FlutterActivity() {
             return out
         }
 
-        // أندرويد 10+ : تقديم اقتراح شبكة (سياسة النظام — لا اتصال صامت).
+        // أندرويد 10+ : اقتراح دائم + تحفيز فحص.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return try {
-                val builder = WifiNetworkSuggestion.Builder().setSsid(ssid)
-                if (useWpa3) {
-                    builder.setWpa3Passphrase(password)
-                } else {
-                    builder.setWpa2Passphrase(password)
-                }
+                val builder = WifiNetworkSuggestion.Builder()
+                    .setSsid(ssid)
+                    .setIsAppInteractionRequired(true)
+                if (useWpa3) builder.setWpa3Passphrase(password)
+                else builder.setWpa2Passphrase(password)
                 val suggestion = builder.build()
 
-                // حذف الاقتراح السابق لنفس الشبكة لتجنّب رفض التكرار.
-                val previous = lastSuggestions
+                val previous = lastSuggestion
                 if (previous != null) {
                     manager.removeNetworkSuggestions(listOf(previous))
                 }
 
                 val status = manager.addNetworkSuggestions(listOf(suggestion))
-                lastSuggestions = suggestion
+                lastSuggestion = suggestion
+
+                // تحفيز فحص فوري حتى يلمح النظام الشبكة ويتصل بالاقتراح سريعاً.
+                try {
+                    manager.startScan()
+                } catch (error: Exception) {
+                    // التقييد الزمني للفحص غير حرج — النظام يفحص دورياً.
+                }
 
                 out["mode"] = "suggestion"
                 out["status"] = status
                 out["message"] =
                     if (status == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
-                        "قُدّم الاقتراح للنظام — سيتصل تلقائياً عند توافر الشبكة"
+                        "حُفظت الشبكة كاقتراح — سيتصل النظام بها تلقائياً"
                     } else {
                         "رفض النظام الاقتراح (رمز $status)"
                     }
@@ -150,7 +306,7 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // أندرويد 9 فما قبل: اتصال برمجي كامل مثل تطبيق الإعدادات.
+        // أندرويد 9- : اتصال برمجي كامل.
         return try {
             val config = WifiConfiguration().apply {
                 SSID = "\"$ssid\""
@@ -200,11 +356,11 @@ class MainActivity : FlutterActivity() {
         return try {
             val manager = wifiManager() ?: return false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val suggestion = lastSuggestions
+                val suggestion = lastSuggestion
                 if (suggestion != null) {
                     val status =
                         manager.removeNetworkSuggestions(listOf(suggestion))
-                    lastSuggestions = null
+                    lastSuggestion = null
                     status != -1
                 } else {
                     true
@@ -236,6 +392,28 @@ class MainActivity : FlutterActivity() {
             true
         } catch (error: Exception) {
             false
+        }
+    }
+
+    /**
+     * يفتح لوحة الواي فاي الرسمية (أندرويد 10+) — قائمة النظام نفسها
+     * للاتصال بضغطة واحدة — البديل المضمون 100%.
+     */
+    private fun openWifiPanel(): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startActivity(Intent(Settings.Panel.ACTION_WIFI))
+            } else {
+                startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+            }
+            true
+        } catch (error: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                true
+            } catch (inner: Exception) {
+                false
+            }
         }
     }
 

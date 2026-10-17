@@ -38,7 +38,7 @@ class WifiConnectService {
   final SystemChannel _system;
 
   /// مهلة انتظار تأكيد الاتصال بعد كل محاولة.
-  static const Duration connectTimeout = Duration(seconds: 14);
+  static const Duration connectTimeout = Duration(seconds: 30);
 
   /// الفاصل بين استعلامات حالة الاتصال.
   static const Duration pollInterval = Duration(seconds: 2);
@@ -49,7 +49,46 @@ class WifiConnectService {
         security == SecurityType.wpa3Enterprise;
   }
 
-  /// يطلب من المنصة الاتصال بالشبكة.
+  /// نسخة أندرويد المخزنة (29+ = مسار Specifier الحاسم).
+  int? _cachedSdk;
+
+  /// إصدار أندرويد (يُقرأ مرة واحدة من قناة النظام).
+  Future<int> sdkVersion() async {
+    if (_cachedSdk != null) return _cachedSdk!;
+    try {
+      final Map<String, dynamic> info = await _system.deviceInfo();
+      final Object? sdk = info['sdk'];
+      _cachedSdk = sdk is int ? sdk : 29;
+    } catch (_) {
+      _cachedSdk = 29;
+    }
+    return _cachedSdk!;
+  }
+
+  /// المحاولة الحاسمة عبر WifiNetworkSpecifier (أندرويد 10+).
+  ///
+  /// النظام يحاول الاقتران بالشبكة بكلمة المرور ويعيد نتيجة نهائية:
+  /// connected=true يعني اقترنا فعلاً، false يعني فشلاً (كلمة خاطئة/بعيدة).
+  Future<SpecifierConnectResult> connectViaSpecifier({
+    required String ssid,
+    required String password,
+    bool wpa3 = false,
+    int timeoutMs = 25000,
+  }) async {
+    final Map<String, dynamic> raw = await _system.connectViaSpecifier(
+      ssid: ssid,
+      password: password,
+      wpa3: wpa3,
+      timeoutMs: timeoutMs,
+    );
+    return SpecifierConnectResult(
+      connected: raw['connected'] == true,
+      message: raw['message']?.toString(),
+      unsupported: raw['unsupported'] == true,
+    );
+  }
+
+  /// يطلب من المنصة الاتصال/حفظ الشبكة (اقتراح على 10+، كامل على 9-).
   Future<WifiConnectResult> connect({
     required String ssid,
     required String password,
@@ -74,6 +113,27 @@ class WifiConnectService {
   /// بيانات الشبكة المتصلة حالياً (ssid/bssid/level/...).
   Future<Map<String, dynamic>> currentWifi() => _system.wifiInfo();
 
+  /// لوحة الواي فاي الرسمية — الاتصال المضمون من النظام نفسه.
+  Future<bool> openWifiPanel() => _system.openWifiPanel();
+
   /// يفتح إعدادات الواي فاي في النظام.
   Future<bool> openWifiSettings() => _system.openWifiSettings();
+}
+
+/// نتيجة المحاولة الحاسمة عبر الـ Specifier.
+class SpecifierConnectResult {
+  const SpecifierConnectResult({
+    required this.connected,
+    this.message,
+    this.unsupported = false,
+  });
+
+  /// هل تم الاقتران بالشبكة فعلاً؟
+  final bool connected;
+
+  /// رسالة عربية من المنصة.
+  final String? message;
+
+  /// المسار غير مدعوم على هذه المنصة (أندرويد 9-).
+  final bool unsupported;
 }

@@ -62,6 +62,56 @@ class SystemChannel {
     }
   }
 
+  /// محاولة اتصال حاسمة عبر WifiNetworkSpecifier (أندرويد 10+).
+  ///
+  /// يعيد: connected=true/false + message — نتيجة نهائية من النظام.
+  Future<Map<String, dynamic>> connectViaSpecifier({
+    required String ssid,
+    required String password,
+    bool wpa3 = false,
+    int timeoutMs = 25000,
+  }) async {
+    try {
+      final Map<dynamic, dynamic>? value =
+          await _channel.invokeMethod<dynamic>('connectViaSpecifier', <String, dynamic>{
+        'ssid': ssid,
+        'password': password,
+        'wpa3': wpa3,
+        'timeoutMs': timeoutMs,
+      });
+      if (value == null) {
+        return <String, dynamic>{'connected': false, 'message': 'لا استجابة'};
+      }
+      return value.map<String, dynamic>(
+        (dynamic key, dynamic val) =>
+            MapEntry<String, dynamic>(key.toString(), val),
+      );
+    } on PlatformException catch (error) {
+      return <String, dynamic>{
+        'connected': false,
+        'message': error.message ?? 'فشل طلب الاتصال',
+      };
+    } on MissingPluginException {
+      return <String, dynamic>{
+        'connected': false,
+        'unsupported': true,
+        'message': 'القناة غير متاحة',
+      };
+    }
+  }
+
+  /// يفتح لوحة الواي فاي الرسمية (أندرويد 10+) — الاتصال بضغطة من النظام.
+  Future<bool> openWifiPanel() async {
+    try {
+      await _channel.invokeMethod<void>('openWifiPanel');
+      return true;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   /// محاولة الاتصال الحقيقي بشبكة واي فاي بكلمة مرور.
   ///
   /// يعيد خريطة من المنصة: mode = legacy | suggestion | error + message.
