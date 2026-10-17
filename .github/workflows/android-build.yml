@@ -35,7 +35,7 @@ jobs:
         run: set -o pipefail && flutter pub get 2>&1 | tee ci_pubget.log
 
       - name: تشغيل الاختبارات
-        run: set -o pipefail && flutter test 2>&1 | tee ci_test.log
+        run: set -o pipefail && flutter test --reporter github 2>&1 | tee ci_test.log
 
       - name: بناء APK (Release)
         run: set -o pipefail && flutter build apk --release 2>&1 | tee ci_build.log
@@ -55,21 +55,13 @@ jobs:
               echo "::error::TAIL|${line:0:700}"
             done
           fi
-          if [ -f ci_test.log ] && grep -qE "\-[0-9]+: " ci_test.log; then
-            # أسماء الاختبارات الفاشلة
-            awk '/ -[0-9]+: .*\[E\]/{print; count++} count>=3{exit}' ci_test.log |
+          # آخر أسطر سجل الاختبار (بعد فك أسطر \r) — احتياطي إن لم تصدر
+          # تعليقات reporter github
+          if [ -f ci_test.log ]; then
+            tail -c 20000 ci_test.log | tr '\r' '\n' | grep -v '^[[:space:]]*$' | tail -n 6 |
               while IFS= read -r line; do
-                echo "::error::TEST-NAME|${line:0:700}"
+                echo "::error::T|${line:0:600}"
               done
-            # تفاصيل الفرق المتوقع/الفعلي
-            awk '/Expected:/{found=1} found{print; count++} count>=10{exit}' ci_test.log |
-              while IFS= read -r line; do
-                [ -n "$line" ] && echo "::error::TEST-DIFF|${line:0:700}"
-              done
-            # أخطاء تحميل الملفات
-            grep -m 3 "Failed to load" ci_test.log | while IFS= read -r line; do
-              echo "::error::LOAD|${line:0:700}"
-            done
           fi
 
       - name: تجهيز ملف التوزيع
