@@ -200,7 +200,7 @@ class MainActivity : FlutterActivity() {
                 else -> "انتهت المهلة دون اقتران"
             }
         }
-        out
+        return out
     }
 
     /** محاولة Specifier واحدة بوضع تشفير محدد — تعيد (نجاح، سبب الفشل). */
