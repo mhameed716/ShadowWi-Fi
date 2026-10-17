@@ -41,9 +41,8 @@ class ShadowWifiApp extends StatelessWidget {
           ),
         ),
         ChangeNotifierProvider<NetworksController>(
-          create: (BuildContext context) => NetworksController(
-            scanService: WifiScanService(PermissionService.instance),
-          ),
+          create: (BuildContext context) =>
+              NetworksController(WifiScanService(PermissionService.instance)),
         ),
       ],
       child: MaterialApp(

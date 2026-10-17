@@ -286,7 +286,7 @@ class PortalController extends ChangeNotifier {
     if (!running) return;
     paused = false;
     running = false;
-    await _runner?.cancel();
+    _runner?.cancel();
     await _cleanupRunner();
     notifyListeners();
   }

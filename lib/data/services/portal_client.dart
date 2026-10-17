@@ -173,7 +173,7 @@ class PortalClient {
 
     bool success = false;
     bool internetVerified = false;
-    String message;
+    String message = 'لم يرد تأكيد واضح من البوابة';
 
     if (verifyInternet) {
       final bool online = await hasInternet();
