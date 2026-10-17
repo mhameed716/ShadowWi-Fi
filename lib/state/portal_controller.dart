@@ -40,10 +40,7 @@ class PortalController extends ChangeNotifier {
   bool detecting = false;
 
   // --------------------------------------------------------- الدخول اليدوي
-  /// اسم المستخدم أو رقم الجهاز.
-  String username = '';
-
-  /// كلمة المرور أو الرمز.
+  /// كود الكارت أو كلمة المرور.
   String password = '';
 
   /// وجهة الاتصال بعد الدخول.
@@ -79,9 +76,6 @@ class PortalController extends ChangeNotifier {
 
   /// الرمز قيد التجربة حالياً.
   String? currentCode;
-
-  /// استخدام الرمز كاسم مستخدم بدل كلمة المرور.
-  bool useCodeAsUsername = false;
 
   /// محاولات الجلسة الحالية.
   List<AttemptLog> sessionLogs = <AttemptLog>[];
@@ -120,13 +114,7 @@ class PortalController extends ChangeNotifier {
     }
   }
 
-  /// يحدّث اسم المستخدم.
-  void setUsername(String value) {
-    username = value;
-    notifyListeners();
-  }
-
-  /// يحدّث كلمة المرور.
+  /// يحدّث كود الكارت أو كلمة المرور.
   void setPassword(String value) {
     password = value;
     notifyListeners();
@@ -138,12 +126,6 @@ class PortalController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// يحدّث طريقة استخدام الرمز.
-  void setUseCodeAsUsername(bool value) {
-    useCodeAsUsername = value;
-    notifyListeners();
-  }
-
   /// يرسل محاولة دخول يدوية.
   Future<void> submitManual() async {
     final GatewayInfo? info = gateway;
@@ -152,8 +134,8 @@ class PortalController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (username.trim().isEmpty) {
-      error = 'أدخل اسم المستخدم أو رقم الجهاز';
+    if (password.trim().isEmpty) {
+      error = 'أدخل كود الكارت أو كلمة المرور';
       notifyListeners();
       return;
     }
@@ -165,11 +147,12 @@ class PortalController extends ChangeNotifier {
 
     final LoginOutcome outcome = await _client.attempt(
       baseUrl: info.baseUrl,
-      username: username,
+      username: '',
       password: password,
       destination: destination.trim().isEmpty
           ? AppConstants.defaultDestination
           : destination.trim(),
+      allowEmptyUsername: true,
     );
 
     lastOutcome = outcome;
@@ -179,7 +162,7 @@ class PortalController extends ChangeNotifier {
 
     await _recordAttempt(
       outcome: outcome,
-      user: username,
+      user: password,
       source: AttemptSource.manual,
     );
   }
@@ -250,12 +233,13 @@ class PortalController extends ChangeNotifier {
       _runner = await AutoFillRunner.start(
         codes: file.codes,
         gateway: info.baseUrl,
-        username: username.trim(),
-        password: password,
+        username: '',
+        password: '',
         destination: destination.trim().isEmpty
             ? AppConstants.defaultDestination
             : destination.trim(),
-        useCodeAsUsername: useCodeAsUsername,
+        useCodeAsUsername: false,
+        allowEmptyUsername: true,
       );
       _subscription = _runner!.events.listen(_handleAutoFillEvent);
     } catch (e) {

@@ -20,7 +20,6 @@ class PortalScreen extends StatefulWidget {
 }
 
 class _PortalScreenState extends State<PortalScreen> {
-  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _destinationController =
       TextEditingController(text: AppConstants.defaultDestination);
@@ -33,7 +32,6 @@ class _PortalScreenState extends State<PortalScreen> {
     super.initState();
     final PortalController controller = context.read<PortalController>();
     _controller = controller;
-    _usernameController.text = controller.username;
     _passwordController.text = controller.password;
     _destinationController.text = controller.destination;
     controller.addListener(_handleControllerChange);
@@ -43,7 +41,6 @@ class _PortalScreenState extends State<PortalScreen> {
   void dispose() {
     _controller?.removeListener(_handleControllerChange);
     _controller = null;
-    _usernameController.dispose();
     _passwordController.dispose();
     _destinationController.dispose();
     super.dispose();
@@ -80,7 +77,6 @@ class _PortalScreenState extends State<PortalScreen> {
         const SizedBox(height: 14),
         _ManualLoginCard(
           controller: controller,
-          usernameController: _usernameController,
           passwordController: _passwordController,
           destinationController: _destinationController,
         ),
@@ -181,13 +177,11 @@ class _GatewayCard extends StatelessWidget {
 class _ManualLoginCard extends StatelessWidget {
   const _ManualLoginCard({
     required this.controller,
-    required this.usernameController,
     required this.passwordController,
     required this.destinationController,
   });
 
   final PortalController controller;
-  final TextEditingController usernameController;
   final TextEditingController passwordController;
   final TextEditingController destinationController;
 
@@ -197,31 +191,19 @@ class _ManualLoginCard extends StatelessWidget {
 
     return SectionCard(
       title: 'الدخول اليدوي',
-      subtitle: 'أدخل بيانات الجهاز أو الكرت للاتصال بالبوابة',
+      subtitle: 'أدخل كود الكارت للاتصال بالبوابة',
       icon: Icons.badge_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          TextField(
-            controller: usernameController,
-            onChanged: controller.setUsername,
-            textInputAction: TextInputAction.next,
-            keyboardType: TextInputType.text,
-            decoration: const InputDecoration(
-              labelText: 'اسم المستخدم أو رقم الجهاز',
-              hintText: 'مثال: 12345678',
-              prefixIcon: Icon(Icons.person_outline, size: 20),
-            ),
-          ),
-          const SizedBox(height: 12),
           TextField(
             controller: passwordController,
             onChanged: controller.setPassword,
             obscureText: true,
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
-              labelText: 'كلمة المرور أو الرمز',
-              hintText: 'أدخل الرمز',
+              labelText: 'كود الكارت / كلمة المرور',
+              hintText: 'أدخل كود الكارت',
               prefixIcon: Icon(Icons.key_outlined, size: 20),
             ),
           ),
@@ -397,21 +379,7 @@ class _AutoFillCard extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 12),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            value: controller.useCodeAsUsername,
-            onChanged: controller.running ? null : controller.setUseCodeAsUsername,
-            title: const Text(
-              'استخدام الرمز كاسم مستخدم',
-              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-            ),
-            subtitle: const Text(
-              'عند التفعيل يُجرَّب كل رمز باسم المستخدم مع كلمة المرور المدخلة',
-              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-            ),
-          ),
-          const SizedBox(height: 8),
+
           if (controller.running || total > 0) ...<Widget>[
             AutoFillControls(
               running: controller.running,
