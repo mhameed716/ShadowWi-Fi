@@ -2,24 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/theme/app_theme.dart';
-import '../../../data/models/attempt_log.dart';
-import '../../../data/models/gateway_info.dart';
 import '../../../data/models/security_type.dart';
 import '../../../data/models/wifi_network_item.dart';
+import '../../../data/services/wifi_connect_service.dart';
 import '../../../data/services/wifi_scan_service.dart';
-import '../../../state/network_attempts_controller.dart';
 import '../../../state/networks_controller.dart';
-import '../../../state/portal_controller.dart';
-import '../../widgets/autofill_controls.dart';
+import '../../../state/wifi_connect_controller.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/signal_bars.dart';
 import '../../widgets/status_chip.dart';
 
-/// تبويب «الشبكات»: شبكات الواي فاي القريبة مع سحب للتحديث.
+/// تبويب «الشبكات» — مثل شاشة إعدادات الواي فاي في أندرويد:
 ///
-/// الضغط على أي شبكة آمنة يفتح نافذة إدخال رمز/كلمة مرور لتجربتها
-/// تلقائياً على بوابة الشبكة (داخل Isolate) بدون اسم مستخدم.
+/// - الشبكة الحالية في الأعلى بحالة «متصل».
+/// - قائمة الشبكات المتاحة مع قوة الإشارة ونوع التشفير.
+/// - الضغط على أي شبكة محمية يفتح نافذة كلمة المرور — ويحاول الاتصال
+///   الحقيقي بالشبكة؛ وعند نجاح الرمز يتصل ويظهر «متصل».
+/// - زر «تجربة تلقائية» يجرّب رموز ملف TXT عبر محاولات اتصال حقيقية
+///   متتالية مع إيقاف مؤقت/استئناف/إلغاء.
+/// - سحب للتحديث لإعادة الفحص (عملية محلية بلا إنترنت).
 class NetworksScreen extends StatefulWidget {
   const NetworksScreen({super.key});
 
@@ -31,16 +33,21 @@ class _NetworksScreenState extends State<NetworksScreen>
     with WidgetsBindingObserver {
   /// مراجع محفوظة للمتحكمات لتفادي قراءة السياق أثناء الإغلاق.
   NetworksController? _controller;
+  WifiConnectController? _wifi;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final NetworksController controller = context.read<NetworksController>();
+    final WifiConnectController wifi = context.read<WifiConnectController>();
     _controller = controller;
+    _wifi = wifi;
     controller.addListener(_handleChange);
+    wifi.addListener(_handleWifiChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       controller.refreshPermissionState();
+      controller.refreshCurrentWifi();
       if (controller.networks.isEmpty && !controller.scanning) {
         controller.scan();
       }
@@ -52,17 +59,20 @@ class _NetworksScreenState extends State<NetworksScreen>
     WidgetsBinding.instance.removeObserver(this);
     _controller?.removeListener(_handleChange);
     _controller = null;
+    _wifi?.removeListener(_handleWifiChange);
+    _wifi = null;
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // عند العودة من إعدادات النظام: نعيد قراءة الأذونات، وإن سمح
-    // المستخدم أثناء غيابنا نبدأ الفحص تلقائياً دون أي ضغطة إضافية.
+    // عند العودة من إعدادات النظام: قراءة الأذونات، وإعادة الفحص تلقائياً
+    // إذا كان العائق مرفوعاً، وتحديث الشبكة المتصلة.
     if (state == AppLifecycleState.resumed) {
       final NetworksController? controller = _controller;
       if (controller == null) return;
       controller.refreshPermissionState().then((_) {
+        controller.refreshCurrentWifi();
         if (!mounted) return;
         if (controller.blocker != null &&
             controller.permission == LocationPermissionState.granted &&
@@ -77,6 +87,23 @@ class _NetworksScreenState extends State<NetworksScreen>
     if (!mounted) return;
     final String? error = _controller?.takeError();
     if (error == null) return;
+    _showError(error);
+  }
+
+  void _handleWifiChange() {
+    if (!mounted) return;
+    final WifiConnectController? wifi = _wifi;
+    if (wifi == null) return;
+    final String? error = wifi.takeError();
+    if (error != null) _showError(error);
+
+    // عند النجاح: تحديث بطاقة «الشبكة الحالية» فوراً مثل أندرويد.
+    if (wifi.connected && wifi.connectedSsid != null) {
+      _controller?.refreshCurrentWifi();
+    }
+  }
+
+  void _showError(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -85,7 +112,7 @@ class _NetworksScreenState extends State<NetworksScreen>
             children: <Widget>[
               const Icon(Icons.error_outline, color: AppColors.primary, size: 20),
               const SizedBox(width: 10),
-              Expanded(child: Text(error)),
+              Expanded(child: Text(message)),
             ],
           ),
           duration: const Duration(seconds: 4),
@@ -93,51 +120,52 @@ class _NetworksScreenState extends State<NetworksScreen>
       );
   }
 
-  Future<void> _openNetworkSheet(WifiNetworkItem network) async {
-    final NetworkAttemptsController attempts =
-        context.read<NetworkAttemptsController>();
-    final GatewayInfo? gateway = context.read<PortalController>().gateway;
-
-    final bool accepted =
-        attempts.setTarget(network, gateway?.baseUrl ?? '');
-    if (!accepted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(attempts.error ?? '')));
-      return;
-    }
+  Future<void> _openNetworkDialog(WifiNetworkItem network) async {
+    final WifiConnectController wifi = context.read<WifiConnectController>();
+    wifi.setTarget(
+      network.displayName,
+      isWpa3: WifiConnectService.isWpa3(network.security),
+    );
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) => ChangeNotifierProvider<
-          NetworkAttemptsController>.value(
-        value: attempts,
-        child: const _NetworkSheet(),
+          WifiConnectController>.value(
+        value: wifi,
+        child: const _ConnectSheet(),
       ),
-    ).whenComplete(attempts.resetIfIdle);
+    ).whenComplete(wifi.resetIfIdle);
   }
 
   @override
   Widget build(BuildContext context) {
     final NetworksController controller = context.watch<NetworksController>();
-    final NetworkAttemptsController attempts =
-        context.watch<NetworkAttemptsController>();
+    final WifiConnectController wifi = context.watch<WifiConnectController>();
+
+    final bool showBlocker = controller.blocker != null ||
+        controller.permission != LocationPermissionState.granted;
 
     return Stack(
       children: <Widget>[
         RefreshIndicator(
-          onRefresh: controller.scan,
+          onRefresh: () async {
+            await controller.scan();
+            await controller.refreshCurrentWifi();
+          },
           color: AppColors.primary,
           backgroundColor: AppColors.surface,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
             children: <Widget>[
+              // الشبكة المتصلة حالياً — مثل أعلى شاشة إعدادات الواي فاي.
+              _CurrentNetworkCard(controller: controller),
+              const SizedBox(height: 12),
+
               // عند نقص الإذن أو وجود عائق: بطاقة معالجة السبب فقط —
-              // لا نعرض «لا توجد شبكات» لأن القائمة الفارغة هنا مضللة.
-              if (controller.blocker != null ||
-                  controller.permission != LocationPermissionState.granted) ...<Widget>[
+              // لا نعرض «لا توجد شبكات» لأن القائمة الفارغة مضللة.
+              if (showBlocker) ...<Widget>[
                 _PermissionBanner(controller: controller),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -176,54 +204,115 @@ class _NetworksScreenState extends State<NetworksScreen>
                   ),
                 )
               else ...<Widget>[
-                Row(
-                  children: <Widget>[
-                    Text(
-                      'تم العثور على ${controller.networks.length} شبكة — '
-                      'اضغط على أي شبكة آمنة لإدخال الرمز',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
-                      ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    'الشبكات المتاحة — ${controller.networks.length}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textSecondary,
                     ),
-                    const Spacer(),
-                    if (controller.scanning)
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 for (final WifiNetworkItem network in controller.networks)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: _NetworkTile(
                       network: network,
+                      connectedTo: controller.currentWifi['ssid']?.toString(),
                       onTap: network.security == SecurityType.open
                           ? null
-                          : () => _openNetworkSheet(network),
+                          : () => _openNetworkDialog(network),
                     ),
                   ),
               ],
             ],
           ),
         ),
-        // شريط حالة العملية الجارية فوق القائمة.
-        if (attempts.running ||
-            (attempts.target != null && attempts.total > 0))
+        // شريط تقدم عائم أثناء الحلقة التلقائية.
+        if (wifi.running)
           Positioned(
             left: 16,
             right: 16,
             bottom: 16,
             child: _RunningBanner(
-              attempts: attempts,
-              onOpen: () => _openNetworkSheet(attempts.target!),
+              wifi: wifi,
+              onOpen: wifi.ssid.isEmpty
+                  ? null
+                  : () {
+                      final WifiNetworkItem? match = controller.networks
+                          .cast<WifiNetworkItem?>()
+                          .firstWhere(
+                            (WifiNetworkItem? item) =>
+                                item?.displayName == wifi.ssid,
+                            orElse: () => null,
+                          );
+                      if (match != null) {
+                        _openNetworkDialog(match);
+                      }
+                    },
             ),
           ),
       ],
+    );
+  }
+}
+
+/// بطاقة الشبكة المتصلة حالياً (أعلى الشاشة مثل أندرويد).
+class _CurrentNetworkCard extends StatelessWidget {
+  const _CurrentNetworkCard({required this.controller});
+
+  final NetworksController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final Map<String, dynamic> info = controller.currentWifi;
+    final String? ssid = info['ssid']?.toString();
+
+    if (ssid == null || ssid.isEmpty) {
+      return SectionCard(
+        title: 'غير متصل',
+        subtitle: 'لا يوجد اتصال واي فاي حالياً',
+        icon: Icons.wifi_off_outlined,
+        child: const SizedBox.shrink(),
+      );
+    }
+
+    final int? level = info['level'] is int ? info['level'] as int : null;
+    final double ratio = level == null
+        ? 0.5
+        : ((level + 100) / 70).clamp(0.0, 1.0).toDouble();
+
+    return SectionCard(
+      title: ssid,
+      subtitle: 'متصل — إشارة ${level ?? '?'} dBm',
+      icon: Icons.wifi,
+      trailing: StatusChip(
+        label: 'متصل',
+        color: AppColors.success,
+        icon: Icons.check_circle,
+      ),
+      child: Row(
+        children: <Widget>[
+          SignalBars(ratio: ratio, color: AppColors.success),
+          const SizedBox(width: 10),
+          if (info['bssid'] != null)
+            Expanded(
+              child: Text(
+                '${info['bssid']}'
+                '${info['frequency'] != null ? ' • ${info['frequency']}MHz' : ''}',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -291,28 +380,37 @@ class _PermissionBanner extends StatelessWidget {
   }
 }
 
-/// عنصر شبكة واحدة — قابل للضغط إذا كانت الشبكة آمنة.
+/// عنصر شبكة واحدة — مثل صفوف قائمة أندرويد.
 class _NetworkTile extends StatelessWidget {
-  const _NetworkTile({required this.network, this.onTap});
+  const _NetworkTile({
+    required this.network,
+    required this.connectedTo,
+    this.onTap,
+  });
 
   final WifiNetworkItem network;
 
-  /// يُمرَّر فقط للشبكات الآمنة.
+  /// اسم الشبكة المتصلة حالياً (إن طابقت يظهر «متصل»).
+  final String? connectedTo;
+
+  /// يُمرَّر فقط للشبكات المحمية.
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final Color securityColor = _colorFromHex(network.security.colorHex);
     final bool tappable = onTap != null;
+    final bool connected =
+        connectedTo != null && connectedTo == network.displayName;
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: tappable
-              ? securityColor.withOpacity(0.25)
-              : AppColors.border,
+          color: connected
+              ? AppColors.success.withOpacity(0.5)
+              : (tappable ? securityColor.withOpacity(0.25) : AppColors.border),
         ),
       ),
       child: InkWell(
@@ -326,13 +424,19 @@ class _NetworkTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: securityColor.withOpacity(0.12),
+                  color: (connected ? AppColors.success : securityColor)
+                      .withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
-                  border:
-                      Border.all(color: securityColor.withOpacity(0.35)),
+                  border: Border.all(
+                    color: (connected ? AppColors.success : securityColor)
+                        .withOpacity(0.35),
+                  ),
                 ),
-                child: Icon(_iconFor(network.security),
-                    color: securityColor, size: 20),
+                child: Icon(
+                  connected ? Icons.wifi : _iconFor(network.security),
+                  color: connected ? AppColors.success : securityColor,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -353,6 +457,12 @@ class _NetworkTile extends StatelessWidget {
                       spacing: 6,
                       runSpacing: 4,
                       children: <Widget>[
+                        if (connected)
+                          const StatusChip(
+                            label: 'متصل',
+                            color: AppColors.success,
+                            dense: true,
+                          ),
                         StatusChip(
                           label: network.security.label,
                           color: securityColor,
@@ -365,15 +475,9 @@ class _NetworkTile extends StatelessWidget {
                         ),
                         if (tappable)
                           StatusChip(
-                            label: 'اضغط لإدخال الرمز',
+                            label: 'اضغط للاتصال',
                             color: AppColors.primary,
                             icon: Icons.key,
-                            dense: true,
-                          ),
-                        if (network.security == SecurityType.unknown)
-                          StatusChip(
-                            label: 'نوع الحماية غير مؤكد',
-                            color: AppColors.warning,
                             dense: true,
                           ),
                       ],
@@ -440,44 +544,42 @@ class _NetworkTile extends StatelessWidget {
   }
 }
 
-/// نافذة إدخال رمز/كلمة مرور الشبكة وتشغيل التجربة التلقائية.
-class _NetworkSheet extends StatefulWidget {
-  const _NetworkSheet();
+/// نافذة الاتصال — مثل نافذة كلمة المرور في أندرويد:
+/// حقل واحد + زر «اتصال» بمحاولة حقيقية، وخيار تجربة تلقائية من ملف TXT.
+class _ConnectSheet extends StatefulWidget {
+  const _ConnectSheet();
 
   @override
-  State<_NetworkSheet> createState() => _NetworkSheetState();
+  State<_ConnectSheet> createState() => _ConnectSheetState();
 }
 
-class _NetworkSheetState extends State<_NetworkSheet> {
-  final TextEditingController _codeController = TextEditingController();
-  final TextEditingController _gatewayController = TextEditingController();
+class _ConnectSheetState extends State<_ConnectSheet> {
+  final TextEditingController _passwordController = TextEditingController();
   bool _obscure = true;
 
   /// مرجع محفوظ للمتحكم لتفادي قراءة السياق أثناء الإغلاق.
-  NetworkAttemptsController? _attempts;
+  WifiConnectController? _wifi;
 
   @override
   void initState() {
     super.initState();
-    final NetworkAttemptsController controller =
-        context.read<NetworkAttemptsController>();
-    _attempts = controller;
-    _gatewayController.text = controller.gatewayUrl;
+    final WifiConnectController controller =
+        context.read<WifiConnectController>();
+    _wifi = controller;
     controller.addListener(_handleChange);
   }
 
   @override
   void dispose() {
-    _attempts?.removeListener(_handleChange);
-    _attempts = null;
-    _codeController.dispose();
-    _gatewayController.dispose();
+    _wifi?.removeListener(_handleChange);
+    _wifi = null;
+    _passwordController.dispose();
     super.dispose();
   }
 
   void _handleChange() {
     if (!mounted) return;
-    final String? error = _attempts?.takeError();
+    final String? error = _wifi?.takeError();
     if (error == null) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -497,9 +599,7 @@ class _NetworkSheetState extends State<_NetworkSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final NetworkAttemptsController attempts =
-        context.watch<NetworkAttemptsController>();
-    final WifiNetworkItem? network = attempts.target;
+    final WifiConnectController wifi = context.watch<WifiConnectController>();
 
     return Padding(
       padding:
@@ -537,133 +637,181 @@ class _NetworkSheetState extends State<_NetworkSheet> {
                     ),
                   ],
                 ),
-                if (network != null) ...<Widget>[
-                  Row(
-                    children: <Widget>[
-                      const Icon(Icons.wifi, color: AppColors.primary, size: 22),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          network.displayName,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.textPrimary,
-                          ),
+
+                // عنوان الشبكة.
+                Row(
+                  children: <Widget>[
+                    const Icon(Icons.wifi, color: AppColors.primary, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        wifi.ssid,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textPrimary,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: <Widget>[
-                      StatusChip(
-                        label: network.security.label,
-                        color: AppColors.primary,
-                        dense: true,
-                      ),
-                      StatusChip(
-                        label: network.bandLabel,
-                        color: AppColors.textSecondary,
-                        dense: true,
-                      ),
-                      StatusChip(
-                        label: '${network.level} dBm',
-                        color: AppColors.textSecondary,
-                        dense: true,
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 14),
-
-                // بوابة التجربة — قابلة للتعديل يدوياً ليعمل التبويب
-                // حتى لو فشل الاكتشاف التلقائي أو كان الجهاز بلا إنترنت.
-                TextField(
-                  controller: _gatewayController,
-                  enabled: !attempts.running,
-                  onChanged: attempts.setGateway,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'بوابة التجربة (IP أو رابط)',
-                    hintText: 'http://192.168.1.1',
-                    prefixIcon: Icon(Icons.router_outlined, size: 20),
-                    helperText: 'عادة عنوان بوابة الشبكة — عدّله إذا اختلف',
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                if (attempts.running || attempts.total > 0) ...<Widget>[
-                  // حالة التشغيل: نفس لوحة تبويب البوابة.
-                  AutoFillControls(
-                    running: attempts.running,
-                    paused: attempts.paused,
-                    completed: attempts.completed,
-                    total: attempts.total,
-                    successCount: attempts.sessionLogs
-                        .where((AttemptLog e) => e.success)
-                        .length,
-                    currentCode: attempts.currentCode,
-                    onStart: attempts.canStart
-                        ? () => attempts.start()
-                        : null,
-                    onPauseResume: !attempts.running
-                        ? null
-                        : (attempts.paused
-                            ? attempts.resume
-                            : attempts.pause),
-                    onCancel:
-                        attempts.running ? () => attempts.cancel() : null,
-                    statusLabel: attempts.connected ? 'نجح الاتصال' : null,
-                  ),
-                  if (attempts.connected) ...<Widget>[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.success.withOpacity(0.10),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: AppColors.success.withOpacity(0.4)),
-                      ),
-                      child: const Row(
-                        children: <Widget>[
-                          Icon(Icons.check_circle,
-                              color: AppColors.success, size: 18),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'نجح الاتصال بالبوابة — الرمز الصحيح ظاهر في الأعلى',
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                   ],
-                ] else ...<Widget>[
-                  // إدخال الرمز يدوياً.
+                ),
+                const SizedBox(height: 16),
+
+                // نتيجة/حالة الاتصال.
+                if (wifi.connected) ...<Widget>[
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(14),
+                      border:
+                          Border.all(color: AppColors.success.withOpacity(0.45)),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        const Icon(Icons.check_circle,
+                            color: AppColors.success, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'تم الاتصال بـ ${wifi.connectedSsid} بنجاح',
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('تم'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (wifi.running && wifi.total > 1) ...<Widget>[
+                  // الحلقة التلقائية جارية — عرض التقدم داخل النافذة.
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Text(
+                          'تجربة رموز «${wifi.ssid}» — ${wifi.completed}/${wifi.total}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: wifi.progress,
+                            minHeight: 6,
+                          ),
+                        ),
+                        if (wifi.currentCode != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'الرمز الحالي: ${wifi.currentCode}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: wifi.paused
+                                    ? wifi.resume
+                                    : wifi.pause,
+                                icon: Icon(
+                                  wifi.paused
+                                      ? Icons.play_circle_outline
+                                      : Icons.pause_circle_outline,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  wifi.paused ? 'استئناف' : 'إيقاف مؤقت',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: wifi.cancel,
+                                icon: const Icon(Icons.stop_circle_outlined,
+                                    size: 16),
+                                label: const Text('إلغاء'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (wifi.running && wifi.total <= 1) ...<Widget>[
+                  // محاولة يدوية جارية.
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'جارٍ الاتصال بـ ${wifi.ssid}...'
+                            '\nقد يستغرق التأكيد حتى 15 ثانية',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              height: 1.5,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        OutlinedButton(
+                          onPressed: wifi.cancel,
+                          child: const Text('إلغاء'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (!wifi.running) ...<Widget>[
+                  // إدخال كلمة المرور — مثل نافذة أندرويد.
                   TextField(
-                    controller: _codeController,
-                    onChanged: attempts.setManualCode,
+                    controller: _passwordController,
+                    onChanged: wifi.setPassword,
                     obscureText: _obscure,
                     textInputAction: TextInputAction.done,
                     decoration: InputDecoration(
-                      labelText: 'كلمة مرور الشبكة أو الرمز',
-                      hintText: 'أدخل الرمز أو اختر ملف TXT',
-                      prefixIcon:
-                          const Icon(Icons.key_outlined, size: 20),
+                      labelText: 'كلمة مرور الشبكة',
+                      hintText: 'أدخل كلمة المرور أو الرمز',
+                      prefixIcon: const Icon(Icons.key_outlined, size: 20),
                       suffixIcon: IconButton(
                         tooltip: _obscure ? 'إظهار' : 'إخفاء',
-                        onPressed: () =>
-                            setState(() => _obscure = !_obscure),
+                        onPressed: () => setState(() => _obscure = !_obscure),
                         icon: Icon(
                           _obscure
                               ? Icons.visibility_outlined
@@ -674,14 +822,21 @@ class _NetworkSheetState extends State<_NetworkSheet> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed:
+                        wifi.canConnect ? () => wifi.connectOnce() : null,
+                    icon: const Icon(Icons.wifi, size: 18),
+                    label: const Text('اتصال'),
+                  ),
+
+                  const SizedBox(height: 6),
                   Row(
                     children: <Widget>[
                       const Expanded(child: Divider()),
                       Padding(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Text(
-                          'أو',
+                          'أو تجربة تلقائية',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary,
@@ -691,51 +846,67 @@ class _NetworkSheetState extends State<_NetworkSheet> {
                       const Expanded(child: Divider()),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 6),
+
                   OutlinedButton.icon(
-                    onPressed: attempts.pickingFile
-                        ? null
-                        : () => attempts.pickFile(),
-                    icon: attempts.pickingFile
+                    onPressed: wifi.pickingFile ? null : wifi.pickFile,
+                    icon: wifi.pickingFile
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.attach_file, size: 18),
                     label: Text(
-                      attempts.selectedFile == null
+                      wifi.selectedFile == null
                           ? 'اختيار ملف TXT للرموز'
-                          : 'الملف: ${attempts.selectedFile!.name} '
-                              '(${attempts.selectedFile!.count} رمز)',
+                          : 'الملف: ${wifi.selectedFile!.name} '
+                              '(${wifi.selectedFile!.count} رمز)',
                     ),
                   ),
-                  if (attempts.selectedFile != null &&
-                      !attempts.running)
+                  if (wifi.selectedFile != null)
                     TextButton.icon(
-                      onPressed: attempts.clearFile,
+                      onPressed: wifi.clearFile,
                       icon: const Icon(Icons.close, size: 14),
                       label: const Text('إزالة الملف'),
                     ),
                   const SizedBox(height: 8),
                   Text(
-                    'سيُجرَّب كل رمز ككلمة مرور على بوابة الشبكة تباعاً '
-                    'داخل الخلفية — بدون اسم مستخدم — مع إمكانية الإيقاف في أي لحظة.',
+                    'ستجرب الحلقة كل رمز عبر محاولة اتصال حقيقية بالشبكة '
+                    'تباعاً — أول رمز صحيح يتصل به الجهاز فعلياً ويظهر «متصل».',
                     style: TextStyle(
                       fontSize: 11,
                       height: 1.6,
                       color: AppColors.textSecondary,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: attempts.canStart
-                        ? () => attempts.start()
-                        : null,
-                    icon: const Icon(Icons.play_arrow, size: 18),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed:
+                        wifi.canStartLoop ? () => wifi.startLoop() : null,
+                    icon: const Icon(Icons.auto_mode, size: 18),
                     label: const Text('بدء التجربة التلقائية'),
                   ),
+                  if (wifi.exhausted) ...<Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        'لم تنجح المحاولة — على أندرويد 10+ قد يطلب النظام '
+                        'تأكيد الاقتراح من إعدادات الواي فاي',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: AppColors.primaryLight,
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: wifi.openWifiSettings,
+                      icon: const Icon(Icons.settings, size: 16),
+                      label: const Text('فتح إعدادات الواي فاي'),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -746,18 +917,17 @@ class _NetworkSheetState extends State<_NetworkSheet> {
   }
 }
 
-/// شريط عائم يعرض حالة العملية الجارية أثناء تصفح القائمة.
+/// شريط عائم يعرض تقدم الحلقة التلقائية أثناء تصفح القائمة.
 class _RunningBanner extends StatelessWidget {
-  const _RunningBanner({required this.attempts, required this.onOpen});
+  const _RunningBanner({required this.wifi, this.onOpen});
 
-  final NetworkAttemptsController attempts;
+  final WifiConnectController wifi;
 
-  /// يفتح نافذة الشبكة مجدداً لمتابعة التقدم.
-  final VoidCallback onOpen;
+  /// يفتح نافذة الشبكة لمتابعة التقدم.
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    final String name = attempts.target?.displayName ?? 'الشبكة';
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
@@ -785,9 +955,8 @@ class _RunningBanner extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  attempts.running
-                      ? 'جارٍ تجربة رموز «$name» — ${attempts.completed}/${attempts.total}'
-                      : 'انتهت عملية «$name»',
+                  'تجربة رموز «${wifi.ssid}» — ${wifi.completed}/${wifi.total}'
+                  '${wifi.paused ? ' (متوقف)' : ''}',
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12,
@@ -796,19 +965,36 @@ class _RunningBanner extends StatelessWidget {
                   ),
                 ),
               ),
+              if (onOpen != null)
+                TextButton(
+                  onPressed: onOpen,
+                  child: const Text('فتح', style: TextStyle(fontSize: 12)),
+                ),
               TextButton(
-                onPressed: onOpen,
-                child: const Text('فتح', style: TextStyle(fontSize: 12)),
+                onPressed: wifi.cancel,
+                child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
               ),
             ],
           ),
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
-              value: attempts.progress,
+              value: wifi.progress,
               minHeight: 5,
             ),
           ),
+          if (wifi.currentCode != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'الرمز الحالي: ${wifi.currentCode}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
         ],
       ),
     );

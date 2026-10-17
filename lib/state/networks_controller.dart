@@ -6,6 +6,9 @@ import '../data/services/permission_service.dart';
 import '../data/services/system_channel.dart';
 import '../data/services/wifi_scan_service.dart';
 
+/// معلومات الشبكة المتصلة حالياً ( ssid/bssid/قوة/تردد).
+Map<String, dynamic> _emptyWifi() => <String, dynamic>{};
+
 /// حالة أذون الموقع.
 enum LocationPermissionState {
   unknown,
@@ -41,6 +44,21 @@ class NetworksController extends ChangeNotifier {
   /// آخر وقت تم فيه الفحص.
   DateTime? lastScanAt;
 
+  /// معلومات الشبكة المتصلة حالياً (فارغة إن لم يكن هناك اتصال).
+  Map<String, dynamic> currentWifi = _emptyWifi();
+
+  /// يعيد قراءة بيانات الشبكة المتصلة من النظام.
+  Future<void> refreshCurrentWifi() async {
+    try {
+      final Map<String, dynamic> info =
+          await SystemChannel.instance.wifiInfo();
+      currentWifi = info;
+      notifyListeners();
+    } catch (_) {
+      currentWifi = _emptyWifi();
+    }
+  }
+
   /// يحدّث حالة إذن الموقع.
   Future<void> refreshPermissionState() async {
     final PermissionService permissions = PermissionService.instance;
@@ -61,6 +79,7 @@ class NetworksController extends ChangeNotifier {
       networks = await _scanService.scan();
       lastScanAt = DateTime.now();
       permission = LocationPermissionState.granted;
+      await refreshCurrentWifi();
     } on WifiScanException catch (e) {
       blocker = e.blocker;
       error = e.message;

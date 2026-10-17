@@ -7,6 +7,7 @@
     <!-- قراءة شبكات الواي فاي القريبة وإحصاءاتها -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- مطلوب على أندرويد 9 فما فوق لعرض أسماء الشبكات والقوة -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

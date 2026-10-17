@@ -62,6 +62,74 @@ class SystemChannel {
     }
   }
 
+  /// محاولة الاتصال الحقيقي بشبكة واي فاي بكلمة مرور.
+  ///
+  /// يعيد خريطة من المنصة: mode = legacy | suggestion | error + message.
+  Future<Map<String, dynamic>> connectToWifi({
+    required String ssid,
+    required String password,
+    bool wpa3 = false,
+  }) async {
+    try {
+      final Map<dynamic, dynamic>? value =
+          await _channel.invokeMethod<dynamic>('connectToWifi', <String, dynamic>{
+        'ssid': ssid,
+        'password': password,
+        'wpa3': wpa3,
+      });
+      if (value == null) return <String, dynamic>{'mode': 'error'};
+      return value.map<String, dynamic>(
+        (dynamic key, dynamic val) =>
+            MapEntry<String, dynamic>(key.toString(), val),
+      );
+    } on PlatformException catch (error) {
+      return <String, dynamic>{'mode': 'error', 'message': error.message};
+    } on MissingPluginException {
+      return <String, dynamic>{
+        'mode': 'error',
+        'message': 'القناة النظامية غير متاحة على هذه المنصة',
+      };
+    }
+  }
+
+  /// هل الجهاز متصل فعلياً بالشبكة المطلوبة الآن؟
+  Future<bool> isConnectedTo(String ssid) async {
+    try {
+      final bool? value = await _channel
+          .invokeMethod<bool>('isConnectedTo', <String, String>{'ssid': ssid});
+      return value ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// نسيان الشبكة (حذف الإعداد أو الاقتراح المحفوظ).
+  Future<bool> forgetNetwork(String ssid) async {
+    try {
+      final bool? value = await _channel
+          .invokeMethod<bool>('forgetNetwork', <String, String>{'ssid': ssid});
+      return value ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// يفتح إعدادات الواي فاي في النظام.
+  Future<bool> openWifiSettings() async {
+    try {
+      await _channel.invokeMethod<void>('openWifiSettings');
+      return true;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   /// يفتح إعدادات الموقع في النظام (لتفعيل خدمة الموقع).
   Future<bool> openLocationSettings() async {
     try {

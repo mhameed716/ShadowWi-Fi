@@ -1,0 +1,407 @@
+import 'package:flutter/foundation.dart';
+
+import '../data/models/attempt_log.dart';
+import '../data/services/code_file_service.dart';
+import '../data/services/wifi_connect_service.dart';
+import 'logs_controller.dart';
+
+/// يدير الاتصال الحقيقي بشبكة واي فاي — كما في تطبيق إعدادات أندرويد.
+///
+/// - محاولة واحدة بكلمة مرور يدوية (زر «اتصال»).
+/// - حلقة تلقائية تجرب رموز ملف TXT عبر محاولات اتصال حقيقية متتالية،
+///   وتتحقق من الحالة الفعلية للاتصال بعد كل محاولة.
+///
+/// الحلقة تعمل على المسار الرئيسي بمهام غير حاجبة (استعلامات حالة)، فلا
+/// تتجمد الواجهة؛ الاستعلامات نفسها نداءات منصة سريعة.
+class WifiConnectController extends ChangeNotifier {
+  WifiConnectController({
+    required WifiConnectService service,
+    LogsController? logsController,
+    CodeFileService codeFileService = const CodeFileService(),
+  })  : _service = service,
+        _logsController = logsController,
+        _codeFileService = codeFileService;
+
+  final WifiConnectService _service;
+  final LogsController? _logsController;
+  final CodeFileService _codeFileService;
+
+  // ------------------------------------------------------------- الهدف
+  /// اسم الشبكة المستهدفة.
+  String ssid = '';
+
+  /// هل الشبكة WPA3 (يحدد مسار كلمة المرور في المنصة)؟
+  bool wpa3 = false;
+
+  // ------------------------------------------------------------ المدخلات
+  /// كلمة المرور اليدوية.
+  String manualPassword = '';
+
+  /// ملف TXT المختار للحلقة التلقائية.
+  CodeFile? selectedFile;
+
+  /// هل جارٍ اختيار الملف؟
+  bool pickingFile = false;
+
+  // ------------------------------------------------------- حالة التشغيل
+  /// هل هناك محاولة/حلقة جارية؟
+  bool running = false;
+
+  /// هل الحلقة متوقفة مؤقتاً؟
+  bool paused = false;
+
+  /// طلب إلغاء صادر من المستخدم.
+  bool _cancelRequested = false;
+
+  /// عدد المحاولات المنتهية.
+  int completed = 0;
+
+  /// إجمالي الرموز في الحلقة (0 = محاولة يدوية واحدة).
+  int total = 0;
+
+  /// الرمز الحالي قيد التجربة.
+  String? currentCode;
+
+  /// هل تم الاتصال فعلاً بالشبكة؟
+  bool connected = false;
+
+  /// اسم الشبكة المتصل بها عند النجاح (لتأكيد المستخدم).
+  String? connectedSsid;
+
+  /// هل انتهت كل المحاولات دون نجاح؟
+  bool exhausted = false;
+
+  /// محاولات الجلسة.
+  List<AttemptLog> sessionLogs = <AttemptLog>[];
+
+  /// رسالة خطأ/حالة آنية.
+  String? error;
+
+  /// الرموز الفعلية للتجربة: من الملف إن وُجد وإلا الرمز اليدوي.
+  List<String> get effectiveCodes {
+    final CodeFile? file = selectedFile;
+    if (file != null && file.codes.isNotEmpty) return file.codes;
+    final String manual = manualPassword.trim();
+    if (manual.isNotEmpty) return <String>[manual];
+    return <String>[];
+  }
+
+  /// نسبة الإنجاز.
+  double get progress {
+    if (total <= 0) return 0;
+    return (completed / total).clamp(0.0, 1.0).toDouble();
+  }
+
+  /// هل يمكن بدء الاتصال اليدوي؟
+  bool get canConnect =>
+      !running && ssid.isNotEmpty && manualPassword.trim().isNotEmpty;
+
+  /// هل يمكن بدء الحلقة التلقائية؟ (ملف برموز أو أكثر من رمز يدوي)
+  bool get canStartLoop {
+    if (running || ssid.isEmpty) return false;
+    final CodeFile? file = selectedFile;
+    if (file != null && file.codes.isNotEmpty) return true;
+    return effectiveCodes.length > 1;
+  }
+
+  /// يضبط الشبكة المستهدفة.
+  void setTarget(String networkSsid, {bool isWpa3 = false}) {
+    if (running) return;
+    ssid = networkSsid;
+    wpa3 = isWpa3;
+    connected = false;
+    connectedSsid = null;
+    exhausted = false;
+    completed = 0;
+    total = 0;
+    currentCode = null;
+    error = null;
+    notifyListeners();
+  }
+
+  /// يحدّث كلمة المرور اليدوية.
+  void setPassword(String value) {
+    manualPassword = value;
+    notifyListeners();
+  }
+
+  /// يفتح منتقي ملف TXT ويقرأ الرموز.
+  Future<void> pickFile() async {
+    if (pickingFile || running) return;
+    pickingFile = true;
+    notifyListeners();
+    try {
+      final CodeFile? file = await _codeFileService.pickTxtFile();
+      if (file == null) return;
+      selectedFile = file;
+      if (file.codes.isEmpty) {
+        error = 'الملف لا يحتوي على أي رموز صالحة';
+      }
+    } catch (e) {
+      error = 'تعذّر قراءة الملف: $e';
+    } finally {
+      pickingFile = false;
+      notifyListeners();
+    }
+  }
+
+  /// يزيل الملف المختار.
+  void clearFile() {
+    if (running) return;
+    selectedFile = null;
+    notifyListeners();
+  }
+
+  /// محاولة اتصال واحدة بكلمة المرور اليدوية (مثل نافذة أندرويد).
+  Future<void> connectOnce() async {
+    if (running) return;
+    final String password = manualPassword.trim();
+    if (ssid.isEmpty) {
+      error = 'لم تُحدَّد الشبكة';
+      notifyListeners();
+      return;
+    }
+    if (password.isEmpty) {
+      error = 'أدخل كلمة مرور الشبكة';
+      notifyListeners();
+      return;
+    }
+
+    running = true;
+    _cancelRequested = false;
+    paused = false;
+    connected = false;
+    connectedSsid = null;
+    exhausted = false;
+    completed = 0;
+    total = 1;
+    currentCode = password;
+    error = null;
+    notifyListeners();
+
+    final bool ok = await _attempt(password, isSingle: true);
+
+    running = false;
+    currentCode = null;
+    if (!ok && !_cancelRequested) {
+      exhausted = true;
+      error = 'فشل الاتصال بهذه الكلمة — تحقق منها أو جرّب الحلقة التلقائية';
+    }
+    notifyListeners();
+  }
+
+  /// الحلقة التلقائية: تجربة رموز الملف عبر اتصالات حقيقية متتالية.
+  Future<void> startLoop() async {
+    if (running) return;
+    final List<String> codes = effectiveCodes;
+    if (ssid.isEmpty) {
+      error = 'لم تُحدَّد الشبكة';
+      notifyListeners();
+      return;
+    }
+    if (codes.isEmpty) {
+      error = 'أدخل كلمة مرور أو اختر ملف TXT';
+      notifyListeners();
+      return;
+    }
+
+    running = true;
+    _cancelRequested = false;
+    paused = false;
+    connected = false;
+    connectedSsid = null;
+    exhausted = false;
+    completed = 0;
+    total = codes.length;
+    currentCode = null;
+    error = null;
+    notifyListeners();
+
+    for (int index = 0; index < codes.length; index++) {
+      await _waitWhilePaused();
+      if (_cancelRequested) break;
+
+      final String code = codes[index];
+      currentCode = code;
+      notifyListeners();
+
+      final bool ok = await _attempt(code);
+
+      if (ok) {
+        completed = index + 1;
+        notifyListeners();
+        break;
+      }
+      completed = index + 1;
+      notifyListeners();
+    }
+
+    running = false;
+    currentCode = null;
+    if (!connected && !_cancelRequested) {
+      exhausted = true;
+      error = 'انتهت كل الرموز دون اتصال — تحقق من ملف الرموز أو نطاق الشبكة';
+    }
+    notifyListeners();
+  }
+
+  /// إيقاف مؤقت.
+  void pause() {
+    if (!running) return;
+    paused = true;
+    notifyListeners();
+  }
+
+  /// استئناف.
+  void resume() {
+    if (!running) return;
+    paused = false;
+    notifyListeners();
+  }
+
+  /// إلغاء المحاولة/الحلقة.
+  void cancel() {
+    if (!running) return;
+    _cancelRequested = true;
+    paused = false;
+    notifyListeners();
+  }
+
+  /// يفتح إعدادات الواي فاي في النظام (لتأكيد الاقتراحات على أندرويد 10+).
+  Future<void> openWifiSettings() async {
+    await _service.openWifiSettings();
+  }
+
+  /// يصفّر الحالة بعد إغلاق النافذة (إن لم يكن هناك عمل جارٍ).
+  void resetIfIdle() {
+    if (running) return;
+    ssid = '';
+    wpa3 = false;
+    manualPassword = '';
+    selectedFile = null;
+    completed = 0;
+    total = 0;
+    currentCode = null;
+    connected = false;
+    connectedSsid = null;
+    exhausted = false;
+    sessionLogs = <AttemptLog>[];
+    error = null;
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------- الداخلية
+
+  /// ينفّذ محاولة اتصال حقيقية واحدة وينتظر تأكيد الحالة.
+  Future<bool> _attempt(String password, {bool isSingle = false}) async {
+    final Stopwatch stopwatch = Stopwatch()..start();
+
+    final WifiConnectResult result = await _service.connect(
+      ssid: ssid,
+      password: password,
+      wpa3: wpa3,
+    );
+
+    if (result.mode == 'error') {
+      _appendLog(
+        success: false,
+        password: password,
+        message: result.message ?? 'فشل طلب الاتصال',
+        durationMs: stopwatch.elapsedMilliseconds,
+        source:
+            isSingle ? AttemptSource.manual : AttemptSource.automatic,
+      );
+      error = result.message ?? 'فشل طلب الاتصال';
+      notifyListeners();
+      return false;
+    }
+
+    // ننتظر تأكيد الاتصال الفعلي من المنصة.
+    final int maxPolls =
+        (WifiConnectService.connectTimeout.inSeconds /
+                WifiConnectService.pollInterval.inSeconds)
+            .ceil();
+
+    for (int poll = 0; poll < maxPolls; poll++) {
+      await Future<void>.delayed(WifiConnectService.pollInterval);
+
+      // تجاوب فوري مع الإيقاف المؤقت والإلغاء بين الاستعلامات.
+      while (paused && !_cancelRequested) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+      if (_cancelRequested) {
+        _appendLog(
+          success: false,
+          password: password,
+          message: 'أُلغيت المحاولة',
+          durationMs: stopwatch.elapsedMilliseconds,
+          source: isSingle ? AttemptSource.manual : AttemptSource.automatic,
+        );
+        return false;
+      }
+
+      if (await _service.isConnectedTo(ssid)) {
+        connected = true;
+        connectedSsid = ssid;
+        _appendLog(
+          success: true,
+          password: password,
+          message: 'تم الاتصال بالشبكة بنجاح',
+          durationMs: stopwatch.elapsedMilliseconds,
+          source: isSingle ? AttemptSource.manual : AttemptSource.automatic,
+        );
+        return true;
+      }
+    }
+
+    _appendLog(
+      success: false,
+      password: password,
+      message: result.isLegacy
+          ? 'لم يتم الاتصال — الكلمة غير صحيحة أو الشبكة بعيدة'
+          : 'لم يؤكد النظام الاتصال — قد يحتاج تأكيداً من إعدادات الواي فاي',
+      durationMs: stopwatch.elapsedMilliseconds,
+      source: isSingle ? AttemptSource.manual : AttemptSource.automatic,
+    );
+    return false;
+  }
+
+  Future<void> _waitWhilePaused() async {
+    while (paused && !_cancelRequested) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+  }
+
+  void _appendLog({
+    required bool success,
+    required String password,
+    required String message,
+    required int durationMs,
+    required AttemptSource source,
+  }) {
+    final AttemptLog log = AttemptLog(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      timestamp: DateTime.now(),
+      gateway: 'wifi://$ssid',
+      username: '',
+      success: success,
+      message: 'شبكة: $ssid — $message',
+      durationMs: durationMs,
+      source: source,
+    );
+    sessionLogs = <AttemptLog>[log, ...sessionLogs].take(50).toList();
+    _logsController?.addAttempt(log);
+  }
+
+  /// رسالة آنية (تُستهلك مرة واحدة).
+  String? takeError() {
+    final String? value = error;
+    error = null;
+    return value;
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+}
