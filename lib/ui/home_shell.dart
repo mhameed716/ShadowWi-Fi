@@ -47,7 +47,7 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ),
             Text(
-              AppConstants.appSubtitle,
+              '${AppConstants.appSubtitle} • v${AppConstants.appVersion}',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,

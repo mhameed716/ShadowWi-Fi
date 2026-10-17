@@ -175,9 +175,9 @@ class _NetworksScreenState extends State<NetworksScreen>
                     padding: const EdgeInsets.only(bottom: 10),
                     child: _NetworkTile(
                       network: network,
-                      onTap: network.security.isSecure
-                          ? () => _openNetworkSheet(network)
-                          : null,
+                      onTap: network.security == SecurityType.open
+                          ? null
+                          : () => _openNetworkSheet(network),
                     ),
                   ),
               ],
@@ -317,6 +317,12 @@ class _NetworkTile extends StatelessWidget {
                             label: 'اضغط لإدخال الرمز',
                             color: AppColors.primary,
                             icon: Icons.key,
+                            dense: true,
+                          ),
+                        if (network.security == SecurityType.unknown)
+                          StatusChip(
+                            label: 'نوع الحماية غير مؤكد',
+                            color: AppColors.warning,
                             dense: true,
                           ),
                       ],

@@ -8,6 +8,9 @@ class AppConstants {
   /// العنوان الفرعي العربي.
   static const String appSubtitle = 'أدوات بوابة الشبكة';
 
+  /// إصدار التطبيق المعروض في الواجهة (يزامن pubspec.yaml يدوياً).
+  static const String appVersion = '1.1.1';
+
   /// اسم الباقة وعنوان القناة الأصلية.
   static const String packageName = 'com.shadowwifi.app';
   static const String systemChannelName = 'com.shadowwifi.app/system';

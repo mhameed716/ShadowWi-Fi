@@ -69,25 +69,28 @@ jobs:
 
       - name: تجهيز ملف التوزيع
         run: |
+          VERSION=$(grep '^version:' pubspec.yaml | cut -d':' -f2 | cut -d'+' -f1 | tr -d ' ')
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/shadowwifi-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/shadowwifi-v${VERSION}.apk"
+          echo "APK_VERSION=${VERSION}" >> "$GITHUB_ENV"
           ls -lh dist/
 
       - name: رفع الملف كـ Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ShadowWi-Fi-APK
-          path: dist/shadowwifi-release.apk
+          name: ShadowWi-Fi-APK-${{ env.APK_VERSION }}
+          path: dist/shadowwifi-*.apk
           if-no-files-found: error
 
-      - name: نشر نسخة برابط تحميل مباشر
+      - name: نشر إصدار برابط تحميل مباشر فريد
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create latest dist/shadowwifi-release.apk \
+          TAG="v${APK_VERSION}"
+          FILE="dist/shadowwifi-v${APK_VERSION}.apk"
+          gh release create "$TAG" "$FILE" \
             --target "$GITHUB_SHA" \
-            --title "ShadowWi-Fi — أحدث نسخة" \
-            --notes "بناء تلقائي (${GITHUB_REF#refs/heads/} @ ${GITHUB_SHA::7}) — حمّل shadowwifi-release.apk" \
-            --latest || true
-          gh release upload latest dist/shadowwifi-release.apk --clobber
-          gh release view latest --json assets --jq '.assets[].name'
+            --title "ShadowWi-Fi ${TAG}" \
+            --notes "بناء تلقائي @ ${GITHUB_SHA::7} — تحميل: shadowwifi-v${APK_VERSION}.apk" \
+            --latest
+          gh release view "$TAG" --json assets --jq '.assets[].name'
