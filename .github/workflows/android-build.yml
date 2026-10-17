@@ -46,7 +46,7 @@ jobs:
           # نُصدر بضعة أسطر فقط (حد GitHub = 10 لكل خطوة):
           if [ -f ci_build.log ]; then
             # 1) أخطاء Dart/Kotlin الفعلية (مطبوعة قبل قسم What went wrong)
-            grep -m 6 -E "\.dart:[0-9]+:[0-9]+: Error|\.kt:[0-9]+:[0-9]+: error|error: |Error: " ci_build.log |
+            grep -m 6 -E "\.dart:[0-9]+:[0-9]+: Error|\.kt:[0-9]+:[0-9]+|^e: |error: |Error: " ci_build.log |
               while IFS= read -r line; do
                 echo "::error::ERR|${line:0:700}"
               done
