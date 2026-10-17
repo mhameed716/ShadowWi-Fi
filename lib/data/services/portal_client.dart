@@ -130,6 +130,7 @@ class PortalClient {
     required String password,
     required String destination,
     bool verifyInternet = true,
+    bool allowEmptyUsername = false,
   }) async {
     final String base = normalizeBase(baseUrl);
     if (base.isEmpty) {
@@ -138,7 +139,7 @@ class PortalClient {
         message: 'عنوان البوابة غير صالح',
       );
     }
-    if (username.trim().isEmpty) {
+    if (username.trim().isEmpty && !allowEmptyUsername) {
       return const LoginOutcome(
         success: false,
         message: 'أدخل اسم المستخدم أو رقم الجهاز',

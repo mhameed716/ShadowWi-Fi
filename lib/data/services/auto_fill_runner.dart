@@ -96,6 +96,7 @@ class AutoFillRunner {
     required String password,
     required String destination,
     bool useCodeAsUsername = false,
+    bool allowEmptyUsername = false,
   }) async {
     final ReceivePort eventsPort = ReceivePort();
     final ReceivePort exitPort = ReceivePort();
@@ -109,6 +110,7 @@ class AutoFillRunner {
       'password': password,
       'destination': destination,
       'useCodeAsUsername': useCodeAsUsername,
+      'allowEmptyUsername': allowEmptyUsername,
     };
 
     final Isolate isolate = await Isolate.spawn<Map<String, dynamic>>(
@@ -237,6 +239,8 @@ void _workerMain(Map<String, dynamic> payload) {
   final String password = payload['password'] as String;
   final String destination = payload['destination'] as String;
   final bool useCodeAsUsername = payload['useCodeAsUsername'] as bool? ?? false;
+  final bool allowEmptyUsername =
+      payload['allowEmptyUsername'] as bool? ?? false;
 
   final ReceivePort control = ReceivePort();
   bool paused = false;
@@ -296,6 +300,7 @@ void _workerMain(Map<String, dynamic> payload) {
           username: useCodeAsUsername ? code : username,
           password: useCodeAsUsername ? password : code,
           destination: destination,
+          allowEmptyUsername: allowEmptyUsername,
         );
       } catch (error) {
         outcome = LoginOutcome(

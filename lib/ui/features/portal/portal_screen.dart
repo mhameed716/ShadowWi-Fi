@@ -7,6 +7,7 @@ import '../../../data/models/attempt_log.dart';
 import '../../../data/models/gateway_info.dart';
 import '../../../data/models/login_outcome.dart';
 import '../../../state/portal_controller.dart';
+import '../../widgets/autofill_controls.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/status_chip.dart';
 
@@ -412,93 +413,22 @@ class _AutoFillCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           if (controller.running || total > 0) ...<Widget>[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: total == 0 ? 0 : controller.progress,
-                minHeight: 8,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: <Widget>[
-                _Metric(
-                  label: 'المحاولات',
-                  value: '$completed / $total',
-                  color: AppColors.textPrimary,
-                ),
-                _Metric(
-                  label: 'الناجحة',
-                  value: '$successCount',
-                  color: AppColors.success,
-                ),
-                _Metric(
-                  label: 'الحالة',
-                  value: controller.running
-                      ? (controller.paused ? 'متوقف' : 'يعمل')
-                      : 'متوقف',
-                  color: controller.running && !controller.paused
-                      ? AppColors.primary
-                      : AppColors.textSecondary,
-                ),
-              ],
-            ),
-            if (controller.currentCode != null) ...<Widget>[
-              const SizedBox(height: 8),
-              Text(
-                'الرمز الحالي: ${controller.currentCode}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: controller.running
-                        ? null
-                        : () => controller.startAutoFill(),
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text('بدء'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: !controller.running
-                        ? null
-                        : (controller.paused
-                            ? controller.resumeAutoFill
-                            : controller.pauseAutoFill),
-                    icon: Icon(
-                      controller.paused
-                          ? Icons.play_circle_outline
-                          : Icons.pause_circle_outline,
-                      size: 18,
-                    ),
-                    label: Text(controller.paused ? 'استئناف' : 'إيقاف مؤقت'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed:
-                        controller.running ? () => controller.cancelAutoFill() : null,
-                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                    label: const Text('إلغاء'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primaryLight,
-                      side: BorderSide(
-                        color: AppColors.primary.withOpacity(0.5),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            AutoFillControls(
+              running: controller.running,
+              paused: controller.paused,
+              completed: completed,
+              total: total,
+              successCount: successCount,
+              currentCode: controller.currentCode,
+              onStart:
+                  controller.running ? null : () => controller.startAutoFill(),
+              onPauseResume: !controller.running
+                  ? null
+                  : (controller.paused
+                      ? controller.resumeAutoFill
+                      : controller.pauseAutoFill),
+              onCancel:
+                  controller.running ? () => controller.cancelAutoFill() : null,
             ),
           ] else ...<Widget>[
             const SizedBox(height: 4),
@@ -513,42 +443,6 @@ class _AutoFillCard extends StatelessWidget {
   }
 }
 
-/// مؤشر رقمي صغير.
-class _Metric extends StatelessWidget {
-  const _Metric({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            label,
-            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// بطاقة محاولات الجلسة.
 class _SessionLogCard extends StatelessWidget {

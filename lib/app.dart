@@ -11,6 +11,7 @@ import 'data/services/system_channel.dart';
 import 'data/services/wifi_scan_service.dart';
 import 'state/diagnostics_controller.dart';
 import 'state/logs_controller.dart';
+import 'state/network_attempts_controller.dart';
 import 'state/networks_controller.dart';
 import 'state/portal_controller.dart';
 import 'ui/home_shell.dart';
@@ -43,6 +44,11 @@ class ShadowWifiApp extends StatelessWidget {
         ChangeNotifierProvider<NetworksController>(
           create: (BuildContext context) =>
               NetworksController(WifiScanService(PermissionService.instance)),
+        ),
+        ChangeNotifierProvider<NetworkAttemptsController>(
+          create: (BuildContext context) => NetworkAttemptsController(
+            logsController: logsController,
+          ),
         ),
       ],
       child: MaterialApp(
