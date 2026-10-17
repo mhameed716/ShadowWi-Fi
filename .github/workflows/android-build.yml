@@ -45,7 +45,11 @@ jobs:
           for f in ci_pubget.log ci_test.log ci_build.log; do
             if [ -f "$f" ]; then
               echo "=== $f ==="
-              grep -m 40 -iE "because|error|conflict|version solving|failed|exception|not found" "$f" | while IFS= read -r line; do
+              {
+                grep -m 5 -B1 -A 12 "What went wrong" "$f"
+                grep -m 10 -B1 -A 4 "Execution failed for task" "$f"
+                grep -m 20 -iE "^.*(error|exception|because|version solving|conflict|not found|failed).*" "$f" | head -25
+              } | sort -u | while IFS= read -r line; do
                 echo "::error::${line:0:800}"
               done
             fi
