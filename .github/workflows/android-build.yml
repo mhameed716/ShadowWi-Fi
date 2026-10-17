@@ -1,7 +1,7 @@
 name: بناء تطبيق Android (APK)
 
+# ⛔ البناء التلقائي معطّل حالياً — يُشغَّل يدوياً فقط من تبويب Actions
 on:
-  push:
   workflow_dispatch:
 
 permissions:
@@ -42,20 +42,23 @@ jobs:
       - name: تشخيص أي فشل
         if: failure()
         run: |
-          for f in ci_pubget.log ci_test.log ci_build.log; do
-            if [ -f "$f" ]; then
-              echo "=== $f ==="
-              # القسم الكامل بعد "* What went wrong:"
-              awk '/\* What went wrong:/{flag=1} flag{print; count++} count>45{exit}' "$f" |
-                while IFS= read -r line; do
-                  [ -n "$line" ] && echo "::error::${line:0:800}"
-                done
-              # آخر 20 سطراً من السجل (ملخص الفشل)
-              tail -n 20 "$f" | while IFS= read -r line; do
-                [ -n "$line" ] && echo "::error::TAIL|${line:0:700}"
+          # نُصدر بضعة أسطر فقط (حد GitHub = 10 لكل خطوة):
+          # أسطر الأسباب ">" من قسم What went wrong + آخر سطرين من سجل البناء.
+          if [ -f ci_build.log ]; then
+            awk '/\* What went wrong:/{flag=1; next} flag && /^> /{print; count++} flag && /^$/{exit} count>6{exit}' ci_build.log |
+              while IFS= read -r line; do
+                echo "::error::${line:0:800}"
               done
-            fi
-          done
+            echo "::error::(آخر سطر في السجل)"
+            tail -n 2 ci_build.log | while IFS= read -r line; do
+              echo "::error::TAIL|${line:0:700}"
+            done
+          fi
+          if [ -f ci_test.log ] && grep -qE "failed|Error" ci_test.log; then
+            grep -m 3 -E "\[E\]|Error: " ci_test.log | while IFS= read -r line; do
+              echo "::error::TEST|${line:0:700}"
+            done
+          fi
 
       - name: تجهيز ملف التوزيع
         run: |
