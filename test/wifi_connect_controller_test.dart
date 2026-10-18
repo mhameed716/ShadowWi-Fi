@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shadow_wifi/state/wifi_connect_controller.dart';
 import 'package:shadow_wifi/data/services/wifi_connect_service.dart';
+import 'package:shadow_wifi/data/services/code_file_service.dart';
 import 'package:shadow_wifi/data/services/system_channel.dart';
 import 'package:shadow_wifi/data/models/security_type.dart';
 
@@ -120,51 +121,98 @@ void main() {
     });
   });
 
-  group('كشف الفشل المبكر لارتداد المصادقة', () {
-    test('الارتداد بعد المصادقة يُكتشف', () {
+  group('كشف الفشل المبكر: ارتباط ثم انفصال', () {
+    test('الارتباط يشمل ASSOCIATED — الإصلاح الجوهري', () {
+      expect(WifiConnectService.isLinkState('ASSOCIATED'), isTrue);
+      expect(WifiConnectService.isLinkState('FOUR_WAY_HANDSHAKE'), isTrue);
+      expect(WifiConnectService.isLinkState('GROUP_HANDSHAKE'), isTrue);
+      expect(WifiConnectService.isLinkState('COMPLETED'), isTrue);
+      expect(WifiConnectService.isLinkState('SCANNING'), isFalse);
+    });
+
+    test('ارتباط ثم انفصال = كلمة خاطئة (دون شرط رؤية المصادقة)', () {
       expect(
         WifiConnectService.authRegressionObserved(
           state: 'SCANNING',
-          sawHandshake: true,
+          sawLink: true,
         ),
         isTrue,
       );
       expect(
         WifiConnectService.authRegressionObserved(
           state: 'DISCONNECTED',
-          sawHandshake: true,
+          sawLink: true,
+        ),
+        isTrue,
+      );
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'DORMANT',
+          sawLink: true,
         ),
         isTrue,
       );
     });
 
-    test('بلا مصادقة سابقة لا يُعتبر الارتداد دليلاً', () {
+    test('بلا ارتباط سابق لا يُعتبر الانفصال دليلاً', () {
       expect(
         WifiConnectService.authRegressionObserved(
           state: 'SCANNING',
-          sawHandshake: false,
+          sawLink: false,
         ),
         isFalse,
       );
     });
 
-    test('حالات المصادقة والتقدم ليست ارتداداً', () {
+    test('حالات الارتباط نفسها ليست انفصالاً', () {
       expect(
         WifiConnectService.authRegressionObserved(
           state: 'FOUR_WAY_HANDSHAKE',
-          sawHandshake: true,
+          sawLink: true,
         ),
         isFalse,
       );
       expect(
         WifiConnectService.authRegressionObserved(
           state: 'COMPLETED',
-          sawHandshake: true,
+          sawLink: true,
         ),
         isFalse,
       );
-      expect(WifiConnectService.isHandshakeState('GROUP_HANDSHAKE'), isTrue);
-      expect(WifiConnectService.isHandshakeState('ASSOCIATED'), isFalse);
+    });
+  });
+
+  group('فلتر الكلمات المكررة', () {
+    test('يعدّ المكرر بالضبط ويحذفه بإبقاء نسخة واحدة', () {
+      final controller = build();
+      controller.selectedFile = const CodeFile(
+        path: '/tmp/t.txt',
+        name: 't.txt',
+        codes: <String>['111', '222', '111', ' 111 ', '333', '', '   '],
+      );
+      expect(controller.duplicateCount, 2);
+      controller.dedupeCodes();
+      expect(controller.selectedFile!.codes, <String>['111', '222', '333']);
+      expect(controller.duplicateCount, 0);
+    });
+
+    test('الكلمات المختلفة حروفاً تبقى كلها', () {
+      final controller = build();
+      controller.selectedFile = const CodeFile(
+        path: '/tmp/t.txt',
+        name: 't.txt',
+        codes: <String>['12345678', '12345679', 'aA1', 'aa1'],
+      );
+      expect(controller.duplicateCount, 0);
+      controller.dedupeCodes();
+      expect(controller.selectedFile!.codes.length, 4);
+    });
+
+    test('بلا ملف: العدد صفر والحذف آمن', () {
+      final controller = build();
+      expect(controller.duplicateCount, 0);
+      controller.dedupeCodes();
+      expect(controller.selectedFile, isNull);
     });
   });
 }

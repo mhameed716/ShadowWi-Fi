@@ -163,6 +163,48 @@ class WifiConnectController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// عدد الكلمات المكررة بالضبط في الملف (بعد تقليم المسافات،
+  /// مع تجاهل الأسطر الفارغة) — الكلمات المختلفة حروفاً ليست مكررة.
+  int get duplicateCount {
+    final CodeFile? file = selectedFile;
+    if (file == null) return 0;
+    final Set<String> seen = <String>{};
+    int duplicates = 0;
+    for (final String raw in file.codes) {
+      final String code = raw.trim();
+      if (code.isEmpty) continue;
+      if (!seen.add(code)) duplicates++;
+    }
+    return duplicates;
+  }
+
+  /// حذف الكلمات المكررة بالضبط مع إبقاء نسخة واحدة من كل كلمة —
+  /// تجربة نفس الكلمة مرتين هدر صرف، والراوتر لا يغيّر كلمته بين
+  /// سطرين من الملف. الكلمات المختلفة حروفاً تبقى كلها.
+  void dedupeCodes() {
+    if (running) return;
+    final CodeFile? file = selectedFile;
+    if (file == null) return;
+    final Set<String> seen = <String>{};
+    final List<String> unique = <String>[];
+    for (final String raw in file.codes) {
+      final String code = raw.trim();
+      if (code.isEmpty) continue;
+      if (seen.add(code)) unique.add(code);
+    }
+    final int before = file.codes.length;
+    selectedFile = CodeFile(
+      path: file.path,
+      name: file.name,
+      codes: unique,
+    );
+    final int removed = before - unique.length;
+    error = removed > 0
+        ? 'حُذفت $removed كلمة مكررة — بقيت ${unique.length} كلمة فريدة'
+        : 'لا توجد كلمات مكررة — الملف نظيف (${unique.length} كلمة)';
+    notifyListeners();
+  }
+
   /// محاولة اتصال واحدة بكلمة المرور اليدوية (مثل نافذة أندرويد).
   Future<void> connectOnce() async {
     if (running) return;
@@ -457,14 +499,34 @@ class WifiConnectController extends ChangeNotifier {
       return false;
     }
 
-    // ننتظر تأكيد الاتصال الفعلي من المنصة — مع كشف مبكر لارتداد
-    // المصادقة (توقيع الكلمة الخاطئة) لتسريع تقدّم الحلقة دون أي
-    // مساس بنجاح الكلمة الصحيحة (المهلة الكاملة تبقى حدّاً أقصى).
-    bool sawHandshake = false;
+    // طور التصفية: لا نرث ارتباط المحاولة السابقة — ننتظر انقضائه،
+    // وإن تبيّن اتصال فعلي متأخر نعتبرها نجاحاً فورياً.
+    for (int clear = 0; clear < 10; clear++) {
+      if (await _service.isConnectedTo(ssid)) {
+        connected = true;
+        connectedSsid = ssid;
+        _appendLog(
+          success: true,
+          password: password,
+          message: 'تأكد الاتصال بالشبكة (تأكيد متأخر)',
+          durationMs: stopwatch.elapsedMilliseconds,
+          source: source,
+        );
+        return true;
+      }
+      final String clearing = await _service.supplicantState();
+      if (!WifiConnectService.isLinkState(clearing)) break;
+      await Future<void>.delayed(WifiConnectService.pollInterval);
+    }
+
+    // ننتظر تأكيد الاتصال الفعلي من المنصة — مع كشف مبكر للانفصال بعد
+    // الارتباط (توقيع الكلمة الخاطئة الحقيقي) لتسريع تقدّم الحلقة دون
+    // أي مساس بنجاح الكلمة الصحيحة (المهلة الكاملة تبقى حدّاً أقصى).
+    bool sawLink = false;
     int regressions = 0;
     final int maxPolls =
-        (WifiConnectService.connectTimeout.inSeconds /
-                WifiConnectService.pollInterval.inSeconds)
+        (WifiConnectService.connectTimeout.inMilliseconds /
+                WifiConnectService.pollInterval.inMilliseconds)
             .ceil();
 
     for (int poll = 0; poll < maxPolls; poll++) {
@@ -501,20 +563,19 @@ class WifiConnectController extends ChangeNotifier {
       // كشف الفشل المبكر: مرور بالمصادقة ثم الارتداد = كلمة خاطئة
       // (الاقتران الصحيح لا يرتد). قراءتان متتاليتان للارتداد تكفيان.
       final String supplicantState = await _service.supplicantState();
-      if (WifiConnectService.isHandshakeState(supplicantState)) {
-        sawHandshake = true;
+      if (WifiConnectService.isLinkState(supplicantState)) {
+        sawLink = true;
         regressions = 0;
       } else if (WifiConnectService.authRegressionObserved(
         state: supplicantState,
-        sawHandshake: sawHandshake,
+        sawLink: sawLink,
       )) {
         regressions++;
         if (regressions >= 2) {
           _appendLog(
             success: false,
             password: password,
-            message: 'ارتد الاقتران بعد المصادقة — الكلمة غير صحيحة '
-                '(اكتشاف مبكر)',
+            message: 'انفصل بعد الارتباط — الكلمة غير صحيحة (اكتشاف مبكر)',
             durationMs: stopwatch.elapsedMilliseconds,
             source: source,
           );

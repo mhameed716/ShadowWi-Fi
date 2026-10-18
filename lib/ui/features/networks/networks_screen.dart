@@ -892,6 +892,24 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                       icon: const Icon(Icons.close, size: 14),
                       label: const Text('إزالة الملف'),
                     ),
+                  if (wifi.selectedFile != null &&
+                      wifi.duplicateCount > 0) ...<Widget>[
+                    Text(
+                      'يوجد ${wifi.duplicateCount} كلمة مكررة في الملف — '
+                      'حذفها يوفّر وقت التجربة',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    OutlinedButton.icon(
+                      onPressed: wifi.dedupeCodes,
+                      icon: const Icon(Icons.cleaning_services, size: 18),
+                      label: const Text(
+                          'حذف المكرر (يبقى نسخة واحدة لكل كلمة)'),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Text(
                     'ستجرب الحلقة كل رمز عبر محاولة اتصال حقيقية بالشبكة '

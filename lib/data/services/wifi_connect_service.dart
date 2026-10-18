@@ -41,7 +41,7 @@ class WifiConnectService {
   static const Duration connectTimeout = Duration(seconds: 20);
 
   /// الفاصل بين استعلامات حالة الاتصال.
-  static const Duration pollInterval = Duration(seconds: 1);
+  static const Duration pollInterval = Duration(milliseconds: 300);
 
   /// يستنتج هل الشبكة WPA3 لاختيار مسار كلمة المرور المناسب.
   static bool isWpa3(SecurityType security) {
@@ -49,8 +49,11 @@ class WifiConnectService {
         security == SecurityType.wpa3Enterprise;
   }
 
-  /// حالات المصادقة التي تدل على تقدّم حقيقي نحو الاقتران.
-  static const Set<String> _handshakeStates = <String>{
+  /// حالات الارتباط بالشبكة — بلوغها يعني بدء التفاوض الفعلي.
+  /// ASSOCIATED مشمولة عمداً: الارتباط ثم الانفصال هو التوقيع الحقيقي
+  /// لكلمة المرور الخاطئة حتى دون التقاط لحظة المصادقة العابرة.
+  static const Set<String> _linkStates = <String>{
+    'ASSOCIATED',
     'FOUR_WAY_HANDSHAKE',
     'GROUP_HANDSHAKE',
     'COMPLETED',
@@ -63,25 +66,27 @@ class WifiConnectService {
     'ASSOCIATED',
     'DISCONNECTED',
     'DORMANT',
+    'INACTIVE',
     'UNINITIALIZED',
     'INVALID',
     'INTERFACE_DISABLED',
     'LOGOFF',
   };
 
-  /// هل الحالة من حالات المصادقة/التقدّم الحقيقي؟
-  static bool isHandshakeState(String state) =>
-      _handshakeStates.contains(state.toUpperCase());
+  /// هل الحالة من حالات الارتباط بالشبكة؟
+  static bool isLinkState(String state) =>
+      _linkStates.contains(state.toUpperCase());
 
-  /// هل وُجد ارتداد بعد المصادقة (توقيع كلمة مرور خاطئة)؟
+  /// هل وُجد انفصال بعد ارتباط حقيقي (توقيع كلمة مرور خاطئة)؟
   ///
-  /// لا يُصدَّق الارتداد قبل رؤية حالة مصادقة — فالتسلسل الطبيعي يبدأ
-  /// بـ SCANNING/ASSOCIATED قبل المصادقة وارتداده ثم طبيعي لا دليل.
+  /// هذا التوقيع الجوهري: النظام يرتبط بالشبكة ثم يفشل التفاوض على
+  /// كلمة خاطئة فينفض الجلسة ويعود للفحص — الاقتران الصحيح لا يرتد.
+  /// لا يُصدَّق الانفصال قبل رؤية ارتباط فعلي في هذه المحاولة.
   static bool authRegressionObserved({
     required String? state,
-    required bool sawHandshake,
+    required bool sawLink,
   }) {
-    if (!sawHandshake || state == null) return false;
+    if (!sawLink || state == null) return false;
     return _regressedStates.contains(state.toUpperCase());
   }
 
