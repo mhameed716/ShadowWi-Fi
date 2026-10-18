@@ -143,6 +143,19 @@ class SystemChannel {
   }
 
   /// هل الجهاز متصل فعلياً بالشبكة المطلوبة الآن؟
+  /// حالة الاقتران الخام (SCANNING/ASSOCIATED/FOUR_WAY_HANDSHAKE/...).
+  Future<String> supplicantState() async {
+    try {
+      final String? value =
+          await _channel.invokeMethod<String>('getSupplicantState');
+      return value ?? 'UNKNOWN';
+    } on PlatformException {
+      return 'UNKNOWN';
+    } on MissingPluginException {
+      return 'UNKNOWN';
+    }
+  }
+
   Future<bool> isConnectedTo(String ssid) async {
     try {
       final bool? value = await _channel

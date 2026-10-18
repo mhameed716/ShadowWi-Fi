@@ -41,12 +41,48 @@ class WifiConnectService {
   static const Duration connectTimeout = Duration(seconds: 20);
 
   /// الفاصل بين استعلامات حالة الاتصال.
-  static const Duration pollInterval = Duration(seconds: 2);
+  static const Duration pollInterval = Duration(seconds: 1);
 
   /// يستنتج هل الشبكة WPA3 لاختيار مسار كلمة المرور المناسب.
   static bool isWpa3(SecurityType security) {
     return security == SecurityType.wpa3 ||
         security == SecurityType.wpa3Enterprise;
+  }
+
+  /// حالات المصادقة التي تدل على تقدّم حقيقي نحو الاقتران.
+  static const Set<String> _handshakeStates = <String>{
+    'FOUR_WAY_HANDSHAKE',
+    'GROUP_HANDSHAKE',
+    'COMPLETED',
+  };
+
+  /// حالات الارتداد — بعد مرور المصادقة تعني كلمة مرور خاطئة.
+  static const Set<String> _regressedStates = <String>{
+    'SCANNING',
+    'ASSOCIATING',
+    'ASSOCIATED',
+    'DISCONNECTED',
+    'DORMANT',
+    'UNINITIALIZED',
+    'INVALID',
+    'INTERFACE_DISABLED',
+    'LOGOFF',
+  };
+
+  /// هل الحالة من حالات المصادقة/التقدّم الحقيقي؟
+  static bool isHandshakeState(String state) =>
+      _handshakeStates.contains(state.toUpperCase());
+
+  /// هل وُجد ارتداد بعد المصادقة (توقيع كلمة مرور خاطئة)؟
+  ///
+  /// لا يُصدَّق الارتداد قبل رؤية حالة مصادقة — فالتسلسل الطبيعي يبدأ
+  /// بـ SCANNING/ASSOCIATED قبل المصادقة وارتداده ثم طبيعي لا دليل.
+  static bool authRegressionObserved({
+    required String? state,
+    required bool sawHandshake,
+  }) {
+    if (!sawHandshake || state == null) return false;
+    return _regressedStates.contains(state.toUpperCase());
   }
 
   /// نسخة أندرويد المخزنة (29+ = مسار Specifier الحاسم).
@@ -133,6 +169,9 @@ class WifiConnectService {
 
   /// هل الجهاز متصل فعلياً بالشبكة الآن؟
   Future<bool> isConnectedTo(String ssid) => _system.isConnectedTo(ssid);
+
+  /// حالة الاقتران الخام من المنصة (لكشف فشل المصادقة مبكراً).
+  Future<String> supplicantState() => _system.supplicantState();
 
   /// نسيان الشبكة.
   Future<bool> forget(String ssid) => _system.forgetNetwork(ssid);

@@ -85,6 +85,7 @@ class MainActivity : FlutterActivity() {
                         val ssid = call.argument<String>("ssid") ?: ""
                         result.success(isConnectedTo(ssid))
                     }
+                    "getSupplicantState" -> result.success(readSupplicantState())
                     "forgetNetwork" -> {
                         val ssid = call.argument<String>("ssid") ?: ""
                         result.success(forgetNetwork(ssid))
@@ -387,6 +388,21 @@ class MainActivity : FlutterActivity() {
             current == ssid && info.supplicantState == SupplicantState.COMPLETED
         } catch (error: Exception) {
             false
+        }
+    }
+
+    /**
+     * حالة الاقتران الخام من النظام (SCANNING/ASSOCIATED/
+     * FOUR_WAY_HANDSHAKE/COMPLETED...) — تُستعمل لكشف فشل المصادقة
+     * مبكراً في الحلقة التلقائية بدل انتظار المهلة كاملة لكل رمز.
+     */
+    private fun readSupplicantState(): String {
+        return try {
+            val manager = wifiManager() ?: return "UNKNOWN"
+            val info = manager.connectionInfo ?: return "UNKNOWN"
+            info.supplicantState?.name ?: "UNKNOWN"
+        } catch (error: Exception) {
+            "UNKNOWN"
         }
     }
 

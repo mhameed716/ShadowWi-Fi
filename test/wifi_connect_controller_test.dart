@@ -119,4 +119,52 @@ void main() {
       expect(plain.needsSystemFix, isFalse);
     });
   });
+
+  group('كشف الفشل المبكر لارتداد المصادقة', () {
+    test('الارتداد بعد المصادقة يُكتشف', () {
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'SCANNING',
+          sawHandshake: true,
+        ),
+        isTrue,
+      );
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'DISCONNECTED',
+          sawHandshake: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('بلا مصادقة سابقة لا يُعتبر الارتداد دليلاً', () {
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'SCANNING',
+          sawHandshake: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('حالات المصادقة والتقدم ليست ارتداداً', () {
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'FOUR_WAY_HANDSHAKE',
+          sawHandshake: true,
+        ),
+        isFalse,
+      );
+      expect(
+        WifiConnectService.authRegressionObserved(
+          state: 'COMPLETED',
+          sawHandshake: true,
+        ),
+        isFalse,
+      );
+      expect(WifiConnectService.isHandshakeState('GROUP_HANDSHAKE'), isTrue);
+      expect(WifiConnectService.isHandshakeState('ASSOCIATED'), isFalse);
+    });
+  });
 }

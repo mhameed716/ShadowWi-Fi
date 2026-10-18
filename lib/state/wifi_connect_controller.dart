@@ -457,7 +457,11 @@ class WifiConnectController extends ChangeNotifier {
       return false;
     }
 
-    // ننتظر تأكيد الاتصال الفعلي من المنصة.
+    // ننتظر تأكيد الاتصال الفعلي من المنصة — مع كشف مبكر لارتداد
+    // المصادقة (توقيع الكلمة الخاطئة) لتسريع تقدّم الحلقة دون أي
+    // مساس بنجاح الكلمة الصحيحة (المهلة الكاملة تبقى حدّاً أقصى).
+    bool sawHandshake = false;
+    int regressions = 0;
     final int maxPolls =
         (WifiConnectService.connectTimeout.inSeconds /
                 WifiConnectService.pollInterval.inSeconds)
@@ -492,6 +496,32 @@ class WifiConnectController extends ChangeNotifier {
           source: isSingle ? AttemptSource.manual : AttemptSource.automatic,
         );
         return true;
+      }
+
+      // كشف الفشل المبكر: مرور بالمصادقة ثم الارتداد = كلمة خاطئة
+      // (الاقتران الصحيح لا يرتد). قراءتان متتاليتان للارتداد تكفيان.
+      final String supplicantState = await _service.supplicantState();
+      if (WifiConnectService.isHandshakeState(supplicantState)) {
+        sawHandshake = true;
+        regressions = 0;
+      } else if (WifiConnectService.authRegressionObserved(
+        state: supplicantState,
+        sawHandshake: sawHandshake,
+      )) {
+        regressions++;
+        if (regressions >= 2) {
+          _appendLog(
+            success: false,
+            password: password,
+            message: 'ارتد الاقتران بعد المصادقة — الكلمة غير صحيحة '
+                '(اكتشاف مبكر)',
+            durationMs: stopwatch.elapsedMilliseconds,
+            source: source,
+          );
+          return false;
+        }
+      } else {
+        regressions = 0;
       }
     }
 
