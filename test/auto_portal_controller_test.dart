@@ -15,7 +15,7 @@ void main() {
       expect(AutoPortalController.formatCode(9999999999), '9999999999');
     });
 
-    test('عدد الخانات اختياري: 9 بدل 10 وأقل', () {
+    test('عدد الخانات اختياري: 9 بدل 10 وأقل', () async {
       expect(AutoPortalController.formatCode(1, 9), '000000001');
       expect(AutoPortalController.formatCode(123456, 9), '000123456');
       expect(AutoPortalController.formatCode(1, 4), '0001');
