@@ -251,11 +251,77 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
               TextField(
                 onChanged: wifi.setStartInput,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'رقم البداية (اختياري)',
-                  hintText: 'اتركه فارغاً للبدء من 0000000001',
-                  prefixIcon: Icon(Icons.pin, size: 20),
+                  hintText:
+                      'اتركه فارغاً للبدء من ${AutoPortalController.formatCode(1, wifi.codeLength)}',
+                  prefixIcon: const Icon(Icons.pin, size: 20),
                 ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                onChanged: wifi.setStep,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'قيمة الزيادة (اختياري)',
+                  hintText: '1 = متتالي • مثال 100: 511 → 611 → 711',
+                  prefixIcon: Icon(Icons.fast_forward, size: 20),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: <Widget>[
+                  const Text(
+                    'عدد الخانات',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    tooltip: 'تقليل',
+                    onPressed: wifi.monitoring
+                        ? null
+                        : () => wifi.setCodeLength(wifi.codeLength - 1),
+                    icon: const Icon(Icons.remove_circle_outline, size: 20),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.inputFill,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Text(
+                      '${wifi.codeLength}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.textPrimary,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'زيادة',
+                    onPressed: wifi.monitoring
+                        ? null
+                        : () => wifi.setCodeLength(wifi.codeLength + 1),
+                    icon: const Icon(Icons.add_circle_outline, size: 20),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'من ${AutoPortalController.minLength} إلى ${AutoPortalController.maxLength}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -306,7 +372,8 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      AutoPortalController.formatCode(wifi.currentNumber),
+                      AutoPortalController.formatCode(
+                          wifi.currentNumber, wifi.codeLength),
                       style: const TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.w900,

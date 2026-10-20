@@ -36,6 +36,8 @@ class AutoPortalState {
     this.lastNumber = 0,
     this.portalUrl = '',
     this.foundCodes = const <FoundCode>[],
+    this.codeLength = 10,
+    this.step = 1,
   });
 
   /// آخر رقم تم فحصه.
@@ -47,6 +49,12 @@ class AutoPortalState {
   /// الرموز المكتشفة (الأحدث أولاً).
   final List<FoundCode> foundCodes;
 
+  /// عدد خانات التوليد المحفوظ.
+  final int codeLength;
+
+  /// قيمة الزيادة المحفوظة.
+  final int step;
+
   /// نسخة قابلة للتخزين.
   Map<String, dynamic> toJson() => <String, dynamic>{
         'lastNumber': lastNumber,
@@ -54,6 +62,8 @@ class AutoPortalState {
         'foundCodes': foundCodes
             .map((FoundCode entry) => entry.toJson())
             .toList(),
+        'codeLength': codeLength,
+        'step': step,
       };
 
   /// استعادة من التخزين.
@@ -74,6 +84,8 @@ class AutoPortalState {
       lastNumber: int.tryParse((json['lastNumber'] ?? 0).toString()) ?? 0,
       portalUrl: (json['portalUrl'] ?? '').toString(),
       foundCodes: codes,
+      codeLength: int.tryParse((json['codeLength'] ?? 10).toString()) ?? 10,
+      step: int.tryParse((json['step'] ?? 1).toString()) ?? 1,
     );
   }
 }

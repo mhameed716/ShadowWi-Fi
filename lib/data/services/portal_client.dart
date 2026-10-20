@@ -158,9 +158,12 @@ class PortalClient {
 
     if (result.response == null) {
       stopwatch.stop();
+      // لا استجابة = غير حاسم (الشبكة تراوغ) — يستحق إعادة المحاولة
+      // بدل الحكم بالفشل زوراً.
       return LoginOutcome(
         success: false,
-        message: result.error ?? 'فشل الاتصال بالبوابة',
+        inconclusive: true,
+        message: result.error ?? 'لا استجابة من البوابة — ستعاد المحاولة',
         durationMs: stopwatch.elapsedMilliseconds,
       );
     }
@@ -172,45 +175,137 @@ class PortalClient {
     final String? title = extractTitle(body);
     final String lowered = body.toLowerCase();
 
-    bool success = false;
-    bool internetVerified = false;
-    String message = 'لم يرد تأكيد واضح من البوابة';
+    // ═══ معيار الحكم: استجابة الراوتر نفسها (لا إنترنت ولا DNS) ═══
+    // يعمل مع الروترات المتصلة بالإنترنت ذات صفحات الدخول — حيث يكون
+    // فحص الإنترنت عاجزاً لأنه كان مفتوحاً أصلاً قبل إدخال الرمز.
 
-    if (verifyInternet) {
-      final bool online = await hasInternet();
-      internetVerified = online;
-      if (online) {
-        success = true;
-        message = 'تم الاتصال بالإنترنت بنجاح';
-      }
+    // 1) رفض صريح بعلامة مؤكدة.
+    if (_containsAny(lowered, _failureMarkers)) {
+      return LoginOutcome(
+        success: false,
+        message: 'رُفض الرمز — أعادت البوابة رسالة رفض صريحة',
+        statusCode: response.statusCode,
+        finalUrl: response.request?.url.toString(),
+        pageTitle: title,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
     }
 
-    if (!success) {
-      if (_containsAny(lowered, _successMarkers)) {
-        success = true;
-        message = 'رُحّب بدخول المستخدم (تحقق من الإنترنت غير متاح)';
-      } else if (_containsAny(lowered, _failureMarkers)) {
-        success = false;
-        message = 'رُفضت البيانات: اسم المستخدم أو الرمز غير صحيح';
-      } else if (title != null &&
-          title.toLowerCase().contains('login')) {
-        success = false;
-        message = 'ما زالت صفحة الدخول معروضة — لم تنجح المصادقة';
-      } else {
-        success = false;
-        message = 'لم يرد تأكيد واضح من البوابة';
-      }
+    // 2) قبول صريح بعلامة تحوّل حقيقية.
+    if (_containsAny(lowered, _successMarkers)) {
+      return LoginOutcome(
+        success: true,
+        message: 'أكدت البوابة قبول الرمز',
+        statusCode: response.statusCode,
+        finalUrl: response.request?.url.toString(),
+        pageTitle: title,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
     }
 
+    // 3) عادت صفحة الدخول نفسها = رفض قاطع (سلوك البوابات الموحد).
+    if (looksLikeLoginPage(body) ||
+        (title != null && title.toLowerCase().contains('login'))) {
+      return LoginOutcome(
+        success: false,
+        message: 'أعادت البوابة صفحة الدخول — الرمز مرفوض',
+        statusCode: response.statusCode,
+        finalUrl: response.request?.url.toString(),
+        pageTitle: title,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
+    }
+
+    // 4) الصفحة تغيّرت: نستشير صفحة حالة الراوتر للحسم النهائي.
+    final bool? statusOpen = await probeStatusOpen(base);
+    if (statusOpen == true) {
+      return LoginOutcome(
+        success: true,
+        message: 'صفحة حالة الراوتر فُتحت — قبول مؤكد',
+        statusCode: response.statusCode,
+        finalUrl: response.request?.url.toString(),
+        pageTitle: title,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
+    }
+    if (statusOpen == false) {
+      return LoginOutcome(
+        success: false,
+        message: 'صفحة الحالة ما زالت مقفلة — الرمز مرفوض',
+        statusCode: response.statusCode,
+        finalUrl: response.request?.url.toString(),
+        pageTitle: title,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
+    }
+
+    // 5) لا دليل قطعي من صفحة الحالة: تغيّرت الاستجابة بعد الرمز —
+    // قبول مرجّح (الرفض المعروف يعيد صفحة الدخول ولم يُعد).
     return LoginOutcome(
-      success: success,
-      message: message,
+      success: true,
+      message: 'تغيّرت استجابة البوابة بعد الرمز — قبول مرجّح',
       statusCode: response.statusCode,
       finalUrl: response.request?.url.toString(),
       pageTitle: title,
       durationMs: stopwatch.elapsedMilliseconds,
-      internetVerified: internetVerified,
     );
+  }
+
+  /// هل يشبه النص صفحة تسجيل دخول (نموذج + حقل كلمة مرور)؟
+  static bool looksLikeLoginPage(String body) {
+    final String lowered = body.toLowerCase();
+    final bool hasPassword = lowered.contains('type="password"') ||
+        lowered.contains("type='password'") ||
+        lowered.contains('name="password"') ||
+        lowered.contains("name='password'");
+    if (!hasPassword) return false;
+    return lowered.contains('<form') || lowered.contains('login');
+  }
+
+  /// مسارات صفحات حالة الروترات الشائعة.
+  static const List<String> _statusPaths = <String>[
+    '/status',
+    '/status.html',
+    '/user/status.html',
+    '/logout.html',
+    '/info.html',
+  ];
+
+  /// يفحص هل صفحة حالة الراوتر مفتوحة (دليل جلسة نشطة بعد قبول الرمز).
+  /// true = فُتحت بلا نموذج دخول، false = ما زالت مقفلة، null = لا دليل.
+  Future<bool?> probeStatusOpen(String baseUrl) async {
+    final String base = normalizeBase(baseUrl);
+    if (base.isEmpty) return null;
+    for (final String path in _statusPaths) {
+      try {
+        final http.Request request = http.Request(
+          'GET',
+          Uri.parse('$base$path'),
+        )..followRedirects = false;
+        final http.StreamedResponse streamed =
+            await request.send().timeout(const Duration(seconds: 4));
+        final http.Response response =
+            await http.Response.fromStream(streamed);
+        final int code = response.statusCode;
+        if (code >= 300 && code < 400) {
+          final String location =
+              (response.headers['location'] ?? '').toLowerCase();
+          if (location.contains('login')) {
+            return false;
+          }
+          continue;
+        }
+        if (code >= 200 && code < 300) {
+          if (looksLikeLoginPage(response.body)) {
+            return false;
+          }
+          return true;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
   }
 
   /// يرسل طلب POST ويعيد النتيجة أو رسالة الخطأ.
@@ -238,13 +333,17 @@ class PortalClient {
     }
   }
 
+  /// علامات قبول صريحة فقط — بلا كلمات فضفاضة تظهر في صفحات الدخول
+  /// نفسها (حُذفت logout وerror لأنهما تلتفان على الحكم).
   static const List<String> _successMarkers = <String>[
     'logged in',
     'login success',
     'status=1',
     'you are logged in',
-    'logout',
     'تم الاتصال',
+    'تم تسجيل الدخول',
+    'session active',
+    'you are connected',
   ];
 
   static const List<String> _failureMarkers = <String>[
@@ -253,10 +352,8 @@ class PortalClient {
     'wrong',
     'failed',
     'denied',
-    'error',
     'not authorized',
     'unauthorized',
-    'invalid username or password',
   ];
 
   static bool _containsAny(String haystack, List<String> needles) {

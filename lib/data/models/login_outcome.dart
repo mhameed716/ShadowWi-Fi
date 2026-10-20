@@ -8,7 +8,11 @@ class LoginOutcome {
     this.pageTitle,
     this.durationMs = 0,
     this.internetVerified = false,
+    this.inconclusive = false,
   });
+
+  /// لا دليل قطعي (لا استجابة مثلًا) — يستحق إعادة المحاولة.
+  final bool inconclusive;
 
   /// هل نجحت المحاولة؟
   final bool success;
@@ -40,6 +44,7 @@ class LoginOutcome {
         'pageTitle': pageTitle,
         'durationMs': durationMs,
         'internetVerified': internetVerified,
+        'inconclusive': inconclusive,
       };
 
   @override

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shadow_wifi/data/services/portal_client.dart';
 import 'package:shadow_wifi/data/services/captive_portal_detector.dart';
 import 'package:shadow_wifi/data/services/system_channel.dart';
 import 'package:shadow_wifi/data/services/state_store.dart';
@@ -12,6 +13,52 @@ void main() {
       expect(AutoPortalController.formatCode(1), '0000000001');
       expect(AutoPortalController.formatCode(123456), '0000123456');
       expect(AutoPortalController.formatCode(9999999999), '9999999999');
+    });
+
+    test('عدد الخانات اختياري: 9 بدل 10 وأقل', () {
+      expect(AutoPortalController.formatCode(1, 9), '000000001');
+      expect(AutoPortalController.formatCode(123456, 9), '000123456');
+      expect(AutoPortalController.formatCode(1, 4), '0001');
+      expect(AutoPortalController.formatCode(12345, 10), '0000012345');
+      final controller = build();
+      expect(controller.codeLength, 10);
+      controller.setCodeLength(9);
+      expect(controller.codeLength, 9);
+      controller.setCodeLength(2);
+      expect(controller.codeLength, 4);
+      controller.setCodeLength(99);
+      expect(controller.codeLength, 12);
+    });
+
+    test('قيمة الزيادة: 511 → 611 → 711 (قفزة 100)', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_step');
+      final List<String> tried = <String>[];
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async {
+          tried.add(code);
+          return false;
+        },
+        delayPickFn: () => 500,
+      );
+      controller.setPortalUrl('http://portal.test/s');
+      controller.setStartInput('511');
+      controller.setStep('100');
+      await controller.start();
+
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 25));
+      while (controller.attempts < 3 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      expect(tried.first, '0000000511');
+      expect(tried[1], '0000000611');
+      expect(tried[2], '0000000711');
+      // قيمة غير صالحة ترجع إلى 1.
+      controller.setStep('abc');
+      expect(controller.step, 1);
+      await temp.delete(recursive: true);
     });
 
     test('parseStart: فارغ أو غير صالح ⇒ 1', () {
@@ -189,6 +236,81 @@ void main() {
       controller.setManualCode('x');
       await controller.tryManualCode();
       expect(controller.manualResult, contains('اكشف البوابة'));
+      await temp.delete(recursive: true);
+    });
+
+    test('كشف صفحة الدخول: نموذج + حقل كلمة مرور', () {
+      expect(
+        PortalClient.looksLikeLoginPage(
+          '<form action="/login"><input type="password" name="password"></form>',
+        ),
+        isTrue,
+      );
+      expect(
+        PortalClient.looksLikeLoginPage(
+          '<html><body><h1>Status: connected</h1></body></html>',
+        ),
+        isFalse,
+      );
+      expect(
+        PortalClient.looksLikeLoginPage(
+          '<form><input type="text" name="user"></form>',
+        ),
+        isFalse,
+      );
+    });
+
+    test('«بدء تلقائي» يبدأ دائماً من رقم الخانة ويصعد', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_test10');
+      final List<String> tried = <String>[];
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async {
+          tried.add(code);
+          return false;
+        },
+        delayPickFn: () => 500,
+      );
+      controller.setPortalUrl('http://portal.test/n');
+      controller.setStartInput('555');
+      await controller.start();
+
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 25));
+      while (controller.attempts < 3 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      expect(tried.first, '0000000555');
+      expect(tried[1], '0000000556');
+      expect(controller.currentNumber, greaterThanOrEqualTo(558));
+      await temp.delete(recursive: true);
+    });
+
+    test('الاستعادة تعيد ملء خانة البداية بنقطة التوقف', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_test11');
+      await StateStore(directory: temp).save(AutoPortalState(
+        lastNumber: 777,
+        portalUrl: 'http://portal.test/r',
+        foundCodes: const <FoundCode>[],
+      ));
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async => false,
+      );
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (controller.startInput.isEmpty && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(controller.startInput, '777');
+      expect(controller.currentNumber, 777);
+      // «بدء تلقائي» يكمل من 778 (خانة الاستئناف).
+      controller.setPortalUrl('http://portal.test/r');
+      await controller.start();
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      await controller.stop();
+      expect(controller.currentNumber, greaterThan(777));
       await temp.delete(recursive: true);
     });
 

