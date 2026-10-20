@@ -63,7 +63,7 @@ jobs:
           # قسم الاستثناء من سجل الاختبار + آخر الأسطر (بعد فك \r)
           if [ -f ci_test.log ]; then
             tr '\r' '\n' < ci_test.log | grep -v '^[[:space:]]*$' > /tmp/test_clean.log
-            awk '/EXCEPTION CAUGHT BY|Test failed|Expected:|Actual:|Which:|The following|was thrown/{print; count++} count>=8{exit}' /tmp/test_clean.log |
+            awk '/EXCEPTION CAUGHT BY|Test failed|Failed to load|Compilation|Expected:|Actual:|Which:|The following|was thrown|Error:/{print; count++} count>=8{exit}' /tmp/test_clean.log |
               while IFS= read -r line; do
                 echo "::error::EXC|${line:0:600}"
               done
