@@ -27,6 +27,27 @@ class PortalInspection {
   final bool chap;
 }
 
+/// شكل نموذج مستخرج من HTML (قبل إضافة بيانات التشفير).
+class _FormShape {
+  _FormShape({
+    required this.action,
+    required this.isPost,
+    required this.hidden,
+    required this.usernameField,
+    required this.passwordField,
+    required this.submitName,
+    required this.submitValue,
+  });
+
+  final Uri action;
+  final bool isPost;
+  final List<MapEntry<String, String>> hidden;
+  final String? usernameField;
+  final String? passwordField;
+  final String? submitName;
+  final String? submitValue;
+}
+
 /// خطة نموذج دخول مستخرجة من صفحة البوابة الحقيقية.
 class _FormPlan {
   _FormPlan({
@@ -484,27 +505,74 @@ class PortalClient {
   }
 
   /// يحلل HTML ويستخرج خطة النموذج (الوجهة والحقول والتشفير).
+  ///
+  /// بعض البوابات (مثل قالب CHAP في ميكروتك) تحتوي نموذجاً مخفياً
+  /// إضافياً كل حقوله hidden — نقيم كل النماذج ونختار الأفضل: النموذج
+  /// الذي فيه حقول إدخال فعلية (نص/كلمة مرور) يغلب النموذج الميت.
   static _FormPlan? _parseForm(String html, Uri pageUri, String sourcePath) {
     final RegExp formRx =
         RegExp(r'<form\b([^>]*)>([\s\S]*?)</form>', caseSensitive: false);
     final List<RegExpMatch> forms = formRx.allMatches(html).toList();
-    String attrs = '';
-    String inner = '';
-    if (forms.isEmpty) {
-      final RegExpMatch? open =
-          RegExp(r'<form\b([^>]*)>', caseSensitive: false).firstMatch(html);
-      if (open == null) return null;
-      attrs = open.group(1) ?? '';
-      inner = html.substring(open.end);
+    _FormShape? best;
+    int bestScore = -1;
+    for (final RegExpMatch m in forms) {
+      final _FormShape? shape =
+          _parseFormShape(m.group(1) ?? '', m.group(2) ?? '', pageUri);
+      if (shape == null) continue;
+      final int score = (shape.passwordField != null ? 2 : 0) +
+          (shape.usernameField != null ? 1 : 0);
+      if (score > bestScore) {
+        best = shape;
+        bestScore = score;
+      }
+    }
+    best ??= _parseOpenForm(html, pageUri);
+    if (best == null) return null;
+
+    String? chapPrefix;
+    String? chapChallenge;
+    bool plainChap = false;
+    final RegExp chapRx = RegExp(
+      r"hexMD5\(\s*'((?:\\.|[^'])*?)'\s*\+\s*[\w.$\[\]]{0,80}password"
+      r"[\w.$\[\]]{0,80}\s*\+\s*'((?:\\.|[^'])*?)'\s*\)",
+      caseSensitive: false,
+    );
+    final RegExpMatch? chapMatch = chapRx.firstMatch(html);
+    if (chapMatch != null) {
+      chapPrefix = _decodeJsLiteral(chapMatch.group(1) ?? '');
+      chapChallenge = _decodeJsLiteral(chapMatch.group(2) ?? '');
     } else {
-      RegExpMatch chosen = forms.firstWhere(
-        (RegExpMatch m) => _looksPasswordField(m.group(2) ?? ''),
-        orElse: () => forms.first,
+      final RegExp plainRx = RegExp(
+        r"hexMD5\(\s*[\w.$\[\]]{0,80}password[\w.$\[\]]{0,80}\s*\)",
+        caseSensitive: false,
       );
-      attrs = chosen.group(1) ?? '';
-      inner = chosen.group(2) ?? '';
+      if (plainRx.hasMatch(html)) {
+        plainChap = true;
+      }
     }
 
+    return _FormPlan(
+      action: best.action,
+      isPost: best.isPost,
+      hidden: best.hidden,
+      usernameField: best.usernameField,
+      passwordField: best.passwordField,
+      submitName: best.submitName,
+      submitValue: best.submitValue,
+      chapPrefix: chapPrefix,
+      chapChallenge: chapChallenge,
+      plainChap: plainChap,
+      sourcePath: sourcePath,
+      noCache: chapPrefix != null || plainChap,
+    );
+  }
+
+  /// استخراج شكل نموذج واحد من سماته وداخله — null إن لم يكن صالحاً.
+  static _FormShape? _parseFormShape(
+    String attrs,
+    String inner,
+    Uri pageUri,
+  ) {
     final String actionRaw = _attr(attrs, 'action').trim();
     final Uri action =
         actionRaw.isEmpty ? pageUri : pageUri.resolve(actionRaw);
@@ -545,32 +613,9 @@ class PortalClient {
     }
     final String? usernameField = _pickUsernameField(textCandidates);
     if (usernameField == null && passwordField == null) {
-      return null; // لا حقل مفيد للدخول في هذا النموذج
+      return null; // نموذج ميت — بلا حقول إدخال فعلية
     }
-
-    String? chapPrefix;
-    String? chapChallenge;
-    bool plainChap = false;
-    final RegExp chapRx = RegExp(
-      r"hexMD5\(\s*'((?:\\.|[^'])*?)'\s*\+\s*[\w.$\[\]]{0,80}password"
-      r"[\w.$\[\]]{0,80}\s*\+\s*'((?:\\.|[^'])*?)'\s*\)",
-      caseSensitive: false,
-    );
-    final RegExpMatch? chapMatch = chapRx.firstMatch(html);
-    if (chapMatch != null) {
-      chapPrefix = _decodeJsLiteral(chapMatch.group(1) ?? '');
-      chapChallenge = _decodeJsLiteral(chapMatch.group(2) ?? '');
-    } else {
-      final RegExp plainRx = RegExp(
-        r"hexMD5\(\s*[\w.$\[\]]{0,80}password[\w.$\[\]]{0,80}\s*\)",
-        caseSensitive: false,
-      );
-      if (plainRx.hasMatch(html)) {
-        plainChap = true;
-      }
-    }
-
-    return _FormPlan(
+    return _FormShape(
       action: action,
       isPost: isPost,
       hidden: hidden,
@@ -578,11 +623,18 @@ class PortalClient {
       passwordField: passwordField,
       submitName: submitName,
       submitValue: submitValue,
-      chapPrefix: chapPrefix,
-      chapChallenge: chapChallenge,
-      plainChap: plainChap,
-      sourcePath: sourcePath,
-      noCache: chapPrefix != null || plainChap,
+    );
+  }
+
+  /// احتياط: صفحة فيها وسم <form> بلا إغلاق — نعامل ما بعده كنموذج واحد.
+  static _FormShape? _parseOpenForm(String html, Uri pageUri) {
+    final RegExpMatch? open =
+        RegExp(r'<form\b([^>]*)>', caseSensitive: false).firstMatch(html);
+    if (open == null) return null;
+    return _parseFormShape(
+      open.group(1) ?? '',
+      html.substring(open.end),
+      pageUri,
     );
   }
 
