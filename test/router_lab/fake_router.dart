@@ -27,6 +27,11 @@ enum LabRouterMode {
   /// بوابة بلا نموذج دخول في أي مسار (صفحات ترحيبية فقط) — لاختبار
   /// صدق الفاحص في التمييز بين «لم نصل» و«وصلنا ولا نموذج».
   noForm,
+
+  /// واجهة جافاسكربت بلا نموذج HTML (نمط الميفي): الخانات بمعرفات id
+  /// فقط، الصفحة الرئيسية تحوّل خارجياً لصفحة كروم، والدخول POST إلى
+  /// /login.html نفسها — لاختبار «قبول أي نموذج إدخال».
+  spaLogin,
 }
 
 /// تنفيذ MD5 مكتمل (RFC 1321) خاص بالمعمل — المدخلات Latin-1 فقط.
@@ -195,7 +200,8 @@ class LabRouter {
       final Map<String, String> fields = Uri.splitQueryString(body);
       log.add('POST $path username=${fields['username'] ?? ''} '
           'password=${fields['password'] ?? ''}');
-      if (path == '/login') {
+      if (path == '/login' ||
+          (mode == LabRouterMode.spaLogin && path == '/login.html')) {
         await _handleLogin(request, fields);
         return;
       }
@@ -216,6 +222,10 @@ class LabRouter {
       case '/':
         if (mode == LabRouterMode.openStatusTrap) {
           await _html(request, 200, _welcomePage());
+        } else if (mode == LabRouterMode.spaLogin) {
+          // تحويل خارجي (إعلان كروم) — يجب أن يُتجاهل كلياً.
+          await _html(
+              request, 200, _redirectPage('http://www.google.com/chrome'));
         } else if (jsRedirectHome) {
           await _html(request, 200, _redirectPage('/portal/auth'));
         } else {
@@ -227,6 +237,14 @@ class LabRouter {
         return;
       case '/login':
       case '/login.html':
+        if (mode == LabRouterMode.spaLogin) {
+          if (path == '/login') {
+            await _html(request, 404, _notFoundPage());
+          } else {
+            await _html(request, 200, _spaLoginPage());
+          }
+          return;
+        }
         await _html(request, 200, _loginPage());
         return;
       case '/status':
@@ -347,6 +365,23 @@ class LabRouter {
         '<input type="password" name="password" value=""/>'
         '<input type="submit" value="Connect"/>'
         '</form></body></html>';
+  }
+
+  String _spaLoginPage() {
+    return '<!DOCTYPE html><html><head><title>MiFi Login</title>'
+        '<script src="/js/app.js"></script></head><body>'
+        '<div class="login-box">'
+        '<input id="username" type="text" placeholder="user"/>'
+        '<input id="password" type="password" placeholder="pass"/>'
+        '<button onclick="doLogin()">Login</button>'
+        '</div>'
+        '<script>function doLogin(){'
+        'var x = new XMLHttpRequest();'
+        "x.open('POST', '/login.html', true);"
+        "x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');"
+        "x.send('username='+document.getElementById('username').value"
+        "+'&password='+document.getElementById('password').value);}"
+        '</script></body></html>';
   }
 
   String _redirectPage(String target) {

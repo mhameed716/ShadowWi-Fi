@@ -274,7 +274,74 @@ void main() {
       print('  $line');
     }
     expect(inspection.formFound, isFalse);
-    expect(inspection.lines.join(' '), contains('لا نموذج'),
+    expect(inspection.lines.join(' '), contains('لا خانات'),
         reason: 'يجب التمييز بين «لم نصل» و«وصلنا ولا نموذج»');
+  });
+
+  test('قبول أي نموذج: صفحة جافاسكربت بلا form يُدخل الرمز الصحيح فعلاً',
+      () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.spaLogin,
+      validCodes: <String>{goodCode},
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final outcome = await client.attempt(
+      baseUrl: router.baseUrl,
+      username: goodCode,
+      password: goodCode,
+      destination: '',
+    );
+
+    print('📜 سجل الروتر: ${router.log}');
+    print('⚖️ حكم المحرك: نجاح=${outcome.success} | ${outcome.message}');
+    expect(router.loginPostReceived, isTrue,
+        reason: 'الرمز يجب أن يصل إلى الصفحة نفسها رغم غياب النموذج');
+    expect(outcome.success, isTrue,
+        reason: 'خانات بمعرفات id فقط وبلا form يجب أن تُدخل كالمتصفح');
+  });
+
+  test('قبول أي نموذج: التحويل الخارجي يُتجاهل والرمز الخاطئ يُرفض',
+      () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.spaLogin,
+      validCodes: <String>{goodCode},
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final outcome = await client.attempt(
+      baseUrl: router.baseUrl,
+      username: badCode,
+      password: badCode,
+      destination: '',
+    );
+
+    print('📜 سجل الروتر: ${router.log}');
+    print('⚖️ حكم المحرك: نجاح=${outcome.success} | ${outcome.message}');
+    expect(outcome.success, isFalse,
+        reason: 'الرمز الخاطئ يُرفض حتى على الواجهات البرمجية');
+  });
+
+  test('الفاحص يشرّح صفحة SPA ويكشف النمط البرمجي', () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.spaLogin,
+      validCodes: <String>{goodCode},
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final PortalInspection inspection = await client.inspect(router.baseUrl);
+    print('📜 تقرير الفاحص: ');
+    for (final String line in inspection.lines) {
+      print('  $line');
+    }
+    expect(inspection.formFound, isTrue);
+    final String report = inspection.lines.join(' ');
+    expect(report, contains('بلا نموذج HTML'),
+        reason: 'التقرير يوضح أن الصفحة واجهة جافاسكربت');
+    expect(report, contains('username'),
+        reason: 'التقرير يعرض أسماء الخانات المكتشفة');
   });
 }

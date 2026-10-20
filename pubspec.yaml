@@ -1,7 +1,7 @@
 name: shadow_wifi
 description: "ShadowWi-Fi — أدوات بوابة الشبكة: كشف البوابة الافتراضية، التشخيص، سجل المحاولات، وفحص شبكات الواي فاي القريبة."
 publish_to: "none"
-version: 1.8.1+17
+version: 1.8.2+18
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

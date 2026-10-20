@@ -64,6 +64,9 @@ class _FormPlan {
     required this.plainChap,
     required this.sourcePath,
     required this.noCache,
+    this.virtual = false,
+    this.usernameAliases = const <String>[],
+    this.passwordAliases = const <String>[],
   });
 
   /// وجهة الإرسال (مطلقة).
@@ -99,6 +102,15 @@ class _FormPlan {
 
   /// لا يُخزَّن في الكاش (CHAP: التحدي يتغير كل مرة).
   final bool noCache;
+
+  /// صفحة بلا نموذج HTML — الإرسال المباشر إلى الصفحة نفسها.
+  final bool virtual;
+
+  /// أسماء بديلة لحقل اسم المستخدم تُرسل معه (لتغطية الواجهات البرمجية).
+  final List<String> usernameAliases;
+
+  /// أسماء بديلة لحقل كلمة المرور تُرسل معه.
+  final List<String> passwordAliases;
 
   bool get chap => chapPrefix != null || plainChap;
 }
@@ -460,10 +472,20 @@ class PortalClient {
       if (plan != null) {
         return _formReport(lines, plan, base);
       }
+      final _FormPlan? virtual =
+          _extractVirtualPlan(response.body, result.finalUri, path);
+      if (virtual != null) {
+        return _formReport(lines, virtual, base);
+      }
       lines.add('• $path : ردّ ${response.statusCode} بحجم '
           '${response.body.length} بلا نموذج دخول '
           '(العنوان: ${title ?? '—'})');
       final Uri? soft = _softRedirect(response.body, result.finalUri);
+      if (soft != null && soft.host != result.finalUri.host) {
+        lines.add('  ↳ تحويل خارجي إلى ${soft.host} — تجاهلناه '
+            '(إعلان/بوابة متصفح لا علاقة لها بالدخول)');
+        continue;
+      }
       if (soft != null) {
         lines.add('  ↳ الصفحة تحوّل بامر مضمّن إلى: $soft — أتابع...');
         final _SendResult softResult = await _sendWithRedirects(
@@ -475,6 +497,14 @@ class PortalClient {
         if (softResponse == null) {
           lines.add('  ✗ الوجهة: لا استجابة — ${softResult.error ?? ''}');
           continue;
+        }
+        final _FormPlan? softVirtual = _extractVirtualPlan(
+          softResponse.body,
+          softResult.finalUri,
+          soft.path,
+        );
+        if (softVirtual != null) {
+          return _formReport(lines, softVirtual, base);
         }
         final _FormPlan? softPlan =
             _parseForm(softResponse.body, softResult.finalUri, soft.path);
@@ -491,29 +521,9 @@ class PortalClient {
       lines.add('2) باقة الجوال (البيانات الخلوية) موقوفة أثناء الفحص');
       lines.add('3) افتح http://mobile.router في متصفح الهاتف للتأكد');
     } else {
-      lines.add('══ وصلنا للبوابة لكن لا نموذج دخول مفهوم في الصفحات أعلاه ══');
-      // بصمة الدخول البرمجي: صفحات إدارة الأجهزة (ميفي/هوتسبوت) تسجّل
-      // الدخول بجافاسكربت عبر واجهات برمجية بلا نموذج HTML أصلاً.
-      final String lowered = lastBody.toLowerCase();
-      final List<String> flags = <String>[
-        if (lowered.contains('xmlhttprequest')) 'XMLHttpRequest',
-        if (lowered.contains('fetch(')) 'fetch()',
-        if (lowered.contains('/api/')) 'واجهة /api/',
-        if (lowered.contains('sha256') || lowered.contains('sha-256'))
-          'SHA256',
-        if (lowered.contains('hexmd5')) 'hexMD5',
-        if (lowered.contains('base64')) 'Base64',
-        if (lowered.contains('token')) 'توكن',
-        if (lowered.contains('csrf')) 'CSRF',
-      ];
-      if (flags.isNotEmpty) {
-        lines.add('★ اكتشاف مهم: هذه صفحة تسجّل الدخول برمجياً (جافاسكربت) '
-            'وليست بنموذج HTML — المؤشرات: ${flags.join('، ')}');
-        lines.add('هذا نمط أجهزة الإدارة المحمولة (ميفي) — أرسل لنا هذه '
-            'الشاشة لنبني محركه الخاص');
-      } else {
-        lines.add('صوّر هذه الشاشة وأرسلها — سنضيف نمط بوابتك للمعمل');
-      }
+      lines.add('══ وصلنا للبوابة لكن لا خانات دخول قابلة للاستعمال ══');
+      lines.addAll(_pageAnatomy(lastBody));
+      lines.add('صوّر هذه الشاشة وأرسلها — سنضيف نمط بوابتك للمعمل');
     }
     return PortalInspection(lines: lines);
   }
@@ -525,6 +535,10 @@ class PortalClient {
     String base,
   ) async {
     lines.add('✓ نموذج الدخول وُجد في: ${plan.sourcePath}');
+    if (plan.virtual) {
+      lines.add('النمط: صفحة بلا نموذج HTML (واجهة جافاسكربت) — '
+          'الإرسال المباشر إلى الصفحة نفسها بأسماء الحقول الحقيقية');
+    }
     lines.add('وجهة الإرسال: ${plan.action}');
     lines.add('الطريقة: ${plan.isPost ? 'POST' : 'GET'}');
     lines.add('حقل اسم المستخدم: ${plan.usernameField ?? '— لا يوجد'}');
@@ -588,6 +602,156 @@ class PortalClient {
     return base.resolve(target.trim());
   }
 
+  /// استخراج افتراضي للخانات من صفحة بلا نموذج HTML (واجهات جافاسكربت
+  /// في أجهزة الميفي): الحقول تُعرَّف بـ id فقط والإرسال برمجي — نرسل
+  /// مباشرة إلى الصفحة نفسها بأسماء الحقول الحقيقية + الأسماء المعيارية.
+  static _FormPlan? _extractVirtualPlan(
+    String html,
+    Uri pageUri,
+    String sourcePath,
+  ) {
+    final String lowered = html.toLowerCase();
+    final bool loginish = sourcePath.toLowerCase().contains('login') ||
+        lowered.contains('login') ||
+        lowered.contains('password') ||
+        lowered.contains('كلمة السر') ||
+        lowered.contains('كلمة المرور');
+    if (!loginish) {
+      return null;
+    }
+    String? usernameKey;
+    String? passwordKey;
+    final List<String> usernameAliases = <String>[];
+    final List<String> passwordAliases = <String>[];
+    final RegExp inputRx =
+        RegExp(r'<input\b([^>]*?)/?>', caseSensitive: false);
+    for (final RegExpMatch m in inputRx.allMatches(html)) {
+      final String tag = m.group(1) ?? '';
+      final String type = _attr(tag, 'type').trim().toLowerCase();
+      final String name = _attr(tag, 'name').trim();
+      final String id = _attr(tag, 'id').trim();
+      final bool textLike = type == 'text' ||
+          type == 'tel' ||
+          type == 'number' ||
+          type == 'search' ||
+          type == 'email' ||
+          type.isEmpty;
+      if (type == 'password') {
+        final String key = name.isNotEmpty
+            ? name
+            : id.isNotEmpty
+                ? id
+                : 'password';
+        if (passwordKey == null) {
+          passwordKey = key;
+        } else if (key != passwordKey && !passwordAliases.contains(key)) {
+          passwordAliases.add(key);
+        }
+      } else if (textLike) {
+        final String key = name.isNotEmpty
+            ? name
+            : id.isNotEmpty
+                ? id
+                : '';
+        if (key.isEmpty) continue;
+        if (usernameKey == null) {
+          usernameKey = key;
+        } else if (key != usernameKey && !usernameAliases.contains(key)) {
+          usernameAliases.add(key);
+        }
+      }
+    }
+    if (passwordKey == null && usernameKey == null) {
+      return null;
+    }
+    if (passwordKey == null) {
+      passwordKey = 'password';
+    } else if (passwordKey != 'password' &&
+        !passwordAliases.contains('password')) {
+      passwordAliases.add('password');
+    }
+    if (usernameKey == null) {
+      usernameKey = 'username';
+    } else if (usernameKey != 'username' &&
+        !usernameAliases.contains('username')) {
+      usernameAliases.add('username');
+    }
+    return _FormPlan(
+      action: pageUri,
+      isPost: true,
+      hidden: const <MapEntry<String, String>>[],
+      usernameField: usernameKey,
+      passwordField: passwordKey,
+      submitName: null,
+      submitValue: null,
+      chapPrefix: null,
+      chapChallenge: null,
+      plainChap: false,
+      sourcePath: sourcePath,
+      noCache: true,
+      virtual: true,
+      usernameAliases: usernameAliases,
+      passwordAliases: passwordAliases,
+    );
+  }
+
+  /// تشريح الصفحة عند غياب أي خانات قابلة للاستعمال: يعرض ما وُجد
+  /// فعلاً (نماذج/خانات/شيفرة) + بصمة عائلة الجهاز — للعرض في الفاحص.
+  static List<String> _pageAnatomy(String html) {
+    final List<String> out = <String>[];
+    final int forms =
+        RegExp(r'<form\b', caseSensitive: false).allMatches(html).length;
+    out.add('عدد النماذج في الصفحة: $forms');
+    int seen = 0;
+    final RegExp inputRx =
+        RegExp(r'<input\b([^>]*?)/?>', caseSensitive: false);
+    for (final RegExpMatch m in inputRx.allMatches(html)) {
+      final String tag = m.group(1) ?? '';
+      final String type = _attr(tag, 'type').trim();
+      final String name = _attr(tag, 'name').trim();
+      final String id = _attr(tag, 'id').trim();
+      if (seen < 6) {
+        out.add('• خانة إدخال: النوع ${type.isEmpty ? '(غير محدد)' : type}'
+            '${id.isEmpty ? '' : '، المعرف $id'}'
+            '${name.isEmpty ? '' : '، الاسم $name'}');
+      }
+      seen++;
+    }
+    if (seen == 0) {
+      out.add('لا خانات إدخال ظاهرة في الصفحة');
+    }
+    final RegExp scriptRx = RegExp(
+      r'<script[^>]*\bsrc\s*=\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]',
+      caseSensitive: false,
+    );
+    final List<String> scripts = <String>[];
+    for (final RegExpMatch m in scriptRx.allMatches(html)) {
+      if (scripts.length < 3) {
+        scripts.add(m.group(1) ?? '');
+      }
+    }
+    if (scripts.isNotEmpty) {
+      out.add('ملفات شيفرة خارجية: ${scripts.join('، ')}');
+    }
+    final String lowered = html.toLowerCase();
+    final List<String> flags = <String>[
+      if (lowered.contains('xmlhttprequest')) 'XMLHttpRequest',
+      if (lowered.contains('fetch(')) 'fetch()',
+      if (lowered.contains('/api/')) 'واجهة /api/',
+      if (lowered.contains('goform')) 'بصمة زد تي (goform)',
+      if (lowered.contains('requestverificationtoken') ||
+          lowered.contains('sesinfo'))
+        'بصمة هواوي (توكن تحقق)',
+      if (lowered.contains('sha256') || lowered.contains('sha-256'))
+        'SHA256',
+      if (lowered.contains('token')) 'توكن',
+    ];
+    if (flags.isNotEmpty) {
+      out.add('★ بصمة الدخول البرمجي: ${flags.join('، ')}');
+    }
+    return out;
+  }
+
   /// يكتشف نموذج الدخول الحقيقي في البوابة.
   Future<_FormPlan?> _fetchFormPlan(String base) async {
     final String key = normalizeBase(base);
@@ -612,9 +776,19 @@ class PortalClient {
         }
         return plan;
       }
-      // الصفحة تحوّل بامر مضمّن؟ نتابع الهدف بحثاً عن النموذج.
+      // لا نموذج HTML؟ نستخرج الخانات من الصفحة كلها (واجهات جافاسكربت).
+      final _FormPlan? virtual =
+          _extractVirtualPlan(response.body, result.finalUri, path);
+      if (virtual != null) {
+        return virtual;
+      }
+      // الصفحة تحوّل بامر مضمّن؟ نتابع الهدف بحثاً عن النموذج —
+      // والتحويلات الخارجية (إعلانات/بوابة متصفح) تُتجاهل كلياً.
       final Uri? soft = _softRedirect(response.body, result.finalUri);
       if (soft == null) continue;
+      if (soft.host != result.finalUri.host) {
+        continue;
+      }
       final _SendResult softResult = await _sendWithRedirects(
         http.Request('GET', soft)..followRedirects = false,
         jar,
@@ -622,6 +796,14 @@ class PortalClient {
       );
       final http.Response? softResponse = softResult.response;
       if (softResponse == null) continue;
+      final _FormPlan? softVirtual = _extractVirtualPlan(
+        softResponse.body,
+        softResult.finalUri,
+        soft.path,
+      );
+      if (softVirtual != null) {
+        return softVirtual;
+      }
       final _FormPlan? softPlan =
           _parseForm(softResponse.body, softResult.finalUri, soft.path);
       if (softPlan != null) {
@@ -977,6 +1159,11 @@ class PortalClient {
     };
     if (plan.usernameField != null) {
       fields[plan.usernameField!] = username;
+      for (final String alias in plan.usernameAliases) {
+        if (alias != plan.usernameField) {
+          fields[alias] = username;
+        }
+      }
     }
     if (plan.passwordField != null) {
       String value = password;
@@ -986,6 +1173,11 @@ class PortalClient {
         value = Md5Util.hash(password);
       }
       fields[plan.passwordField!] = value;
+      for (final String alias in plan.passwordAliases) {
+        if (alias != plan.passwordField) {
+          fields[alias] = value;
+        }
+      }
     }
     if (plan.submitName != null) {
       fields[plan.submitName!] = plan.submitValue ?? '';
