@@ -85,7 +85,9 @@ class StateStore {
   final Directory? _injected;
 
   Future<Directory> _resolveDir() async {
-    if (_injected != null) return _injected;
+    // حقول المثيل لا تُرقّى أنواعها بعد فحص الـ null — ننسخ لمتغير محلي.
+    final Directory? injected = _injected;
+    if (injected != null) return injected;
     return getApplicationDocumentsDirectory();
   }
 
