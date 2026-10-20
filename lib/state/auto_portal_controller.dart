@@ -123,7 +123,7 @@ class AutoPortalController extends ChangeNotifier {
 
   /// تحديث قيمة الزيادة (غير صالح/صفر/سالب ⇒ 1).
   void setStep(String raw) {
-    if (running || monitoring) return;
+    if (monitoring) return;
     final int? value = int.tryParse(raw.trim());
     step = (value == null || value < 1) ? 1 : value;
     notifyListeners();
@@ -131,7 +131,7 @@ class AutoPortalController extends ChangeNotifier {
 
   /// ضبط عدد الخانات (مقيّد بين 4 و12) — لا يتغير أثناء العمل.
   void setCodeLength(int value) {
-    if (running || monitoring) return;
+    if (monitoring) return;
     codeLength = value.clamp(minLength, maxLength).toInt();
     notifyListeners();
   }

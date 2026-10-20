@@ -20,7 +20,12 @@ void main() {
       expect(AutoPortalController.formatCode(123456, 9), '000123456');
       expect(AutoPortalController.formatCode(1, 4), '0001');
       expect(AutoPortalController.formatCode(12345, 10), '0000012345');
-      final controller = build();
+      final Directory tempLen = await Directory.systemTemp.createTemp('ap_len');
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: tempLen),
+        attemptFn: (String url, String code) async => false,
+      );
       expect(controller.codeLength, 10);
       controller.setCodeLength(9);
       expect(controller.codeLength, 9);
@@ -28,6 +33,7 @@ void main() {
       expect(controller.codeLength, 4);
       controller.setCodeLength(99);
       expect(controller.codeLength, 12);
+      await tempLen.delete(recursive: true);
     });
 
     test('قيمة الزيادة: 511 → 611 → 711 (قفزة 100)', () async {
