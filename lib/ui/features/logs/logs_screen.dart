@@ -1,5 +1,6 @@
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -224,14 +225,46 @@ class _LogTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            log.username,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-              fontFamily: 'monospace',
-            ),
+          Row(
+            children: <Widget>[
+              const Text(
+                'الكلمة: ',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  log.username.isEmpty ? '—' : log.username,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+              if (log.username.isNotEmpty)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'نسخ الكلمة',
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: log.username),
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم نسخ الكلمة'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                ),
+            ],
           ),
           const SizedBox(height: 4),
           Text(

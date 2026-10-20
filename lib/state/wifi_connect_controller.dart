@@ -269,6 +269,17 @@ class WifiConnectController extends ChangeNotifier {
     // الأذونات اللازمة للحلقة التلقائية.
     await PermissionService.instance.requestScanPermissions();
 
+    // تدفئة فحص واحدة لبداية الحلقة — النظام يخزّن لمح الشبكة
+    // فيتصل بالاقتراحات دون انتظار دورة فحص خلفية بطيئة.
+    final WifiScanService? warmer = _scanService;
+    if (warmer != null) {
+      try {
+        await warmer.scan();
+      } catch (_) {
+        // الفحص المقيّد زمنياً ليس شرطاً — النظام يفحص دورياً.
+      }
+    }
+
     running = true;
     _cancelRequested = false;
     paused = false;
@@ -501,7 +512,7 @@ class WifiConnectController extends ChangeNotifier {
 
     // طور التصفية: لا نرث ارتباط المحاولة السابقة — ننتظر انقضائه،
     // وإن تبيّن اتصال فعلي متأخر نعتبرها نجاحاً فورياً.
-    for (int clear = 0; clear < 10; clear++) {
+    for (int clear = 0; clear < 5; clear++) {
       if (await _service.isConnectedTo(ssid)) {
         connected = true;
         connectedSsid = ssid;
@@ -613,7 +624,7 @@ class WifiConnectController extends ChangeNotifier {
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       timestamp: DateTime.now(),
       gateway: 'wifi://$ssid',
-      username: '',
+      username: password,
       success: success,
       message: 'شبكة: $ssid — $message',
       durationMs: durationMs,

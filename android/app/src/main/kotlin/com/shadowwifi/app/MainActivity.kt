@@ -45,7 +45,7 @@ class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
 
     /** آخر اقتراح شبكة قدّمناه — لحذفه بدقة عند "نسيان" الشبكة. */
-    private var lastSuggestion: WifiNetworkSuggestion? = null
+    private var lastSuggestions: List<WifiNetworkSuggestion> = emptyList()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -272,10 +272,23 @@ class MainActivity : FlutterActivity() {
     // الاتصال الدائم — اقتراح الشبكة (أندرويد 10+) / الإعداد الكامل (9-)
     // ------------------------------------------------------------------
 
+    /** بناء اقتراح شبكة بوضع التشفير المحدد. */
+    private fun buildSuggestion(
+        ssid: String,
+        password: String,
+        wpa3: Boolean
+    ): WifiNetworkSuggestion {
+        val builder = WifiNetworkSuggestion.Builder()
+            .setSsid(ssid)
+            .setIsAppInteractionRequired(true)
+        if (wpa3) builder.setWpa3Passphrase(password)
+        else builder.setWpa2Passphrase(password)
+        return builder.build()
+    }
+
     /**
      * يحاول الاتصال/حفظ الشبكة:
-     * - أندرويد 10+: تقديم اقتراح دائم (يتصل النظام به عند التواجد في النطاق)
-     *   مع تحفيز فحص فوري لتسريع الاقتران.
+     * - أندرويد 10+: اقتراحان دائمان (WPA2 + WPA3) مع تحفيز فحص فوري.
      * - أندرويد 9-: اتصال برمجي كامل فوري.
      */
     private fun connectToWifi(
@@ -301,23 +314,30 @@ class MainActivity : FlutterActivity() {
             return out
         }
 
-        // أندرويد 10+ : اقتراح دائم + تحفيز فحص.
+        // أندرويد 10+ : اقتراحان معاً (WPA2 + WPA3) + تحفيز فحص.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return try {
-                val builder = WifiNetworkSuggestion.Builder()
-                    .setSsid(ssid)
-                    .setIsAppInteractionRequired(true)
-                if (useWpa3) builder.setWpa3Passphrase(password)
-                else builder.setWpa2Passphrase(password)
-                val suggestion = builder.build()
-
-                val previous = lastSuggestion
-                if (previous != null) {
-                    manager.removeNetworkSuggestions(listOf(previous))
+                // النمط الرسمي للشبكات الانتقالية: WPA2 يفشل حاسماً
+                // وسريعاً مع الكلمة الخاطئة، وWPA3 يغطي الشبكات الوحيدة
+                // والتفضيلية — الترتيب يبدأ بوضع الشبكة المكتشف.
+                val suggestions = if (useWpa3) {
+                    listOf(
+                        buildSuggestion(ssid, password, wpa3 = true),
+                        buildSuggestion(ssid, password, wpa3 = false),
+                    )
+                } else {
+                    listOf(
+                        buildSuggestion(ssid, password, wpa3 = false),
+                        buildSuggestion(ssid, password, wpa3 = true),
+                    )
                 }
 
-                val status = manager.addNetworkSuggestions(listOf(suggestion))
-                lastSuggestion = suggestion
+                if (lastSuggestions.isNotEmpty()) {
+                    manager.removeNetworkSuggestions(lastSuggestions)
+                }
+
+                val status = manager.addNetworkSuggestions(suggestions)
+                lastSuggestions = suggestions
 
                 // تحفيز فحص فوري حتى يلمح النظام الشبكة ويتصل بالاقتراح سريعاً.
                 try {
@@ -411,11 +431,10 @@ class MainActivity : FlutterActivity() {
         return try {
             val manager = wifiManager() ?: return false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val suggestion = lastSuggestion
-                if (suggestion != null) {
+                if (lastSuggestions.isNotEmpty()) {
                     val status =
-                        manager.removeNetworkSuggestions(listOf(suggestion))
-                    lastSuggestion = null
+                        manager.removeNetworkSuggestions(lastSuggestions)
+                    lastSuggestions = emptyList()
                     status != -1
                 } else {
                     true
