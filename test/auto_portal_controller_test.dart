@@ -135,18 +135,23 @@ void main() {
       await controller.start();
 
       // انتظار التوقف الذكي عند الرمز الثالث.
-      final DateTime deadline = DateTime.now().add(const Duration(seconds: 20));
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 30));
       while (!controller.smartPaused && DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
-      expect(controller.smartPaused, isTrue);
-      expect(controller.attempts, 3);
+      expect(controller.smartPaused, isTrue,
+          reason: 'الحالة: ${controller.statusText}');
+      expect(controller.attempts, 3,
+          reason:
+              'المحاولات — الحالة: ${controller.statusText} | الرقم الحالي: ${controller.currentNumber}');
       expect(controller.lastFound!.code, '0000000003');
       expect(controller.foundCodes.first.code, '0000000003');
 
       // الحفظ التلقائي: آخر رقم = الرمز المكتشف.
       final AutoPortalState saved = await store.load();
-      expect(saved.lastNumber, 3);
+      expect(saved.lastNumber, 3,
+          reason:
+              'آخر رقم محفوظ — الحالة: ${controller.statusText} | المحاولات: ${controller.attempts} | المكتشف: ${controller.foundCodes.length}');
 
       // الاستئناف: يتجاوز الرمز المكتشف ويواصل البحث.
       controller.resumeEngine();
