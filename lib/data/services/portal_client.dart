@@ -439,6 +439,7 @@ class PortalClient {
     }
     lines.add('الهدف: $base');
     bool reached = false;
+    String lastBody = '';
     for (final String path in _formPaths) {
       final _SendResult result = await _sendWithRedirects(
         http.Request('GET', Uri.parse('$base/').resolve(path))
@@ -452,6 +453,7 @@ class PortalClient {
         continue;
       }
       reached = true;
+      lastBody = response.body;
       final String? title = extractTitle(response.body);
       final _FormPlan? plan =
           _parseForm(response.body, result.finalUri, path);
@@ -490,7 +492,28 @@ class PortalClient {
       lines.add('3) افتح http://mobile.router في متصفح الهاتف للتأكد');
     } else {
       lines.add('══ وصلنا للبوابة لكن لا نموذج دخول مفهوم في الصفحات أعلاه ══');
-      lines.add('صوّر هذه الشاشة وأرسلها — سنضيف نمط بوابتك للمعمل');
+      // بصمة الدخول البرمجي: صفحات إدارة الأجهزة (ميفي/هوتسبوت) تسجّل
+      // الدخول بجافاسكربت عبر واجهات برمجية بلا نموذج HTML أصلاً.
+      final String lowered = lastBody.toLowerCase();
+      final List<String> flags = <String>[
+        if (lowered.contains('xmlhttprequest')) 'XMLHttpRequest',
+        if (lowered.contains('fetch(')) 'fetch()',
+        if (lowered.contains('/api/')) 'واجهة /api/',
+        if (lowered.contains('sha256') || lowered.contains('sha-256'))
+          'SHA256',
+        if (lowered.contains('hexmd5')) 'hexMD5',
+        if (lowered.contains('base64')) 'Base64',
+        if (lowered.contains('token')) 'توكن',
+        if (lowered.contains('csrf')) 'CSRF',
+      ];
+      if (flags.isNotEmpty) {
+        lines.add('★ اكتشاف مهم: هذه صفحة تسجّل الدخول برمجياً (جافاسكربت) '
+            'وليست بنموذج HTML — المؤشرات: ${flags.join('، ')}');
+        lines.add('هذا نمط أجهزة الإدارة المحمولة (ميفي) — أرسل لنا هذه '
+            'الشاشة لنبني محركه الخاص');
+      } else {
+        lines.add('صوّر هذه الشاشة وأرسلها — سنضيف نمط بوابتك للمعمل');
+      }
     }
     return PortalInspection(lines: lines);
   }
