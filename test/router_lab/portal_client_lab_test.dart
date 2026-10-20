@@ -204,4 +204,77 @@ void main() {
     expect(outcome.success, isTrue,
         reason: 'الراوتر قبل الرمز فعلاً — يجب الإبلاغ بالحقيقة');
   });
+
+  test('الفاحص يجد النموذج خلف تحويل مضمّن ويعرض تقريراً كاملاً', () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.mikrotikPap,
+      validCodes: <String>{goodCode},
+      jsRedirectHome: true,
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final PortalInspection inspection = await client.inspect(router.baseUrl);
+    print('📜 تقرير الفاحص: ');
+    for (final String line in inspection.lines) {
+      print('  $line');
+    }
+    expect(inspection.formFound, isTrue,
+        reason: 'يجب متابعة التحويل المضمّن حتى النموذج الحقيقي');
+  });
+
+  test('المحرك يسجل دخولاً فعلياً على بوابة تحوّل بامر مضمّن', () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.mikrotikPap,
+      validCodes: <String>{goodCode},
+      jsRedirectHome: true,
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final outcome = await client.attempt(
+      baseUrl: router.baseUrl,
+      username: goodCode,
+      password: goodCode,
+      destination: '',
+    );
+
+    print('📜 سجل الروتر: ${router.log}');
+    print('⚖️ حكم المحرك: نجاح=${outcome.success} | ${outcome.message}');
+    expect(router.loginPostReceived, isTrue,
+        reason: 'الرمز يجب أن يصل إلى وجهة النموذج الحقيقية بعد التحويل');
+    expect(outcome.success, isTrue,
+        reason: 'الرمز الصحيح يجب أن يُقبل خلف التحويل المضمّن');
+  });
+
+  test('الفاحص على عنوان ميت يقول الحقيقة: لم يصل الاتصال نهائياً', () async {
+    // المنفذ 9 ميت محلياً — لا مستمع عليه إطلاقاً.
+    final PortalInspection inspection =
+        await client.inspect('http://127.0.0.1:9');
+    print('📜 تقرير الفاحص: ');
+    for (final String line in inspection.lines) {
+      print('  $line');
+    }
+    expect(inspection.formFound, isFalse);
+    expect(inspection.lines.join(' '), contains('لم يصل الاتصال'),
+        reason: 'الرسالة القديمة «لم أجد نموذج» كانت مضللة');
+  });
+
+  test('الفاحص على بوابة بلا نموذج يقول: وصلنا ولا نموذج', () async {
+    final LabRouter router = LabRouter(
+      mode: LabRouterMode.openStatusTrap,
+      validCodes: <String>{goodCode},
+    );
+    await router.start();
+    addTearDown(router.stop);
+
+    final PortalInspection inspection = await client.inspect(router.baseUrl);
+    print('📜 تقرير الفاحص: ');
+    for (final String line in inspection.lines) {
+      print('  $line');
+    }
+    expect(inspection.formFound, isFalse);
+    expect(inspection.lines.join(' '), contains('لا نموذج'),
+        reason: 'يجب التمييز بين «لم نصل» و«وصلنا ولا نموذج»');
+  });
 }

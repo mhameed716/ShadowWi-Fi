@@ -130,9 +130,14 @@ class LabRouter {
     required this.mode,
     required this.validCodes,
     this.noisyLoginPage = false,
+    this.jsRedirectHome = false,
   });
 
   final LabRouterMode mode;
+
+  /// الصفحة الرئيسية تحوّل بامر مضمّن (meta refresh + JS) إلى مسار
+  /// غير مألوف — يحاكي البوابات التي يفشل معها البحث المباشر.
+  final bool jsRedirectHome;
 
   /// الرموز الصحيحة (اسم المستخدم = كلمة المرور = الرمز كعرف القسائم).
   final Set<String> validCodes;
@@ -203,9 +208,14 @@ class LabRouter {
       case '/':
         if (mode == LabRouterMode.openStatusTrap) {
           await _html(request, 200, _welcomePage());
+        } else if (jsRedirectHome) {
+          await _html(request, 200, _redirectPage('/portal/auth'));
         } else {
           await _html(request, 200, _loginPage());
         }
+        return;
+      case '/portal/auth':
+        await _html(request, 200, _loginPage());
         return;
       case '/login':
       case '/login.html':
@@ -329,6 +339,14 @@ class LabRouter {
         '<input type="password" name="password" value=""/>'
         '<input type="submit" value="Connect"/>'
         '</form></body></html>';
+  }
+
+  String _redirectPage(String target) {
+    return '<!DOCTYPE html><html><head>'
+        '<meta http-equiv="refresh" content="0; url=$target">'
+        '<title>Redirect</title></head><body>'
+        '<script>window.location.href="$target";</script>'
+        '<p>redirecting...</p></body></html>';
   }
 
   String _welcomePage() {

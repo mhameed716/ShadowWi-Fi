@@ -278,7 +278,7 @@ class AutoPortalController extends ChangeNotifier {
     manualSuccess = ok;
     manualResult = ok
         ? 'الرمز صحيح — البوابة قَبِلته!'
-        : 'الرمز غير صحيح';
+        : 'الرمز غير صحيح (أو تعذّر الوصول للبوابة — جرّب «فاحص البوابة»)';
     _pushLog(code, ok, manual: true);
     if (ok) {
       final FoundCode found =

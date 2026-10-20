@@ -570,6 +570,21 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
                   label: const Text('تجربة الرمز'),
                 ),
               ),
+              if (wifi.monitoring) ...<Widget>[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.danger,
+                      side: const BorderSide(color: AppColors.danger),
+                    ),
+                    onPressed: () => wifi.stop(),
+                    icon: const Icon(Icons.stop_circle, size: 18),
+                    label: const Text('إيقاف البحث التلقائي'),
+                  ),
+                ),
+              ],
               if (wifi.manualResult != null) ...<Widget>[
                 const SizedBox(height: 8),
                 Text(

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../../core/app_constants.dart';
 import '../models/internet_check_result.dart';
@@ -133,6 +134,14 @@ class _SendResult {
 /// ويحكم من ردّ الراوتر نفسه بدليل إيجابي فقط — بلا إنترنت ولا DNS.
 class PortalClient {
   const PortalClient();
+
+  /// عميل HTTP مشترك يقبل الشهادات الذاتية — صفحات بوابات الروترات
+  /// كثيراً ما تتحول إلى HTTPS بشهادة محلية يرفضها العميل الافتراضي.
+  static final http.Client _httpClient = IOClient(
+    HttpClient()
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true,
+  );
 
   /// يضيف http:// عند عدم وجود بروتوكول.
   static String normalizeBase(String raw) {
@@ -275,7 +284,7 @@ class PortalClient {
       return LoginOutcome(
         success: false,
         inconclusive: true,
-        message: 'لم أجد نموذج تسجيل دخول في البوابة — ستعاد المحاولة',
+        message: 'تعذّر الوصول إلى نموذج الدخول — ستعاد المحاولة',
         durationMs: stopwatch.elapsedMilliseconds,
       );
     }
@@ -418,8 +427,9 @@ class PortalClient {
     );
   }
 
-  /// فاحص البوابة: تقرير تشخيصي عربي — النموذج المكتشف وما سيُرسل
-  /// وسلوك الرفض الحقيقي (برمز تمييز وهمي).
+  /// فاحص البوابة: تقرير تشخيصي عربي صادق — هل وصلنا للراوتر أصلاً؟
+  /// وماذا ردّ كل مسار حرفياً؟ وأين النموذج إن وُجد (بعد ملاحقة
+  /// التحويلات المضمّنة)؟ ثم سلوك الرفض الحقيقي برمز تمييز وهمي.
   Future<PortalInspection> inspect(String baseUrl) async {
     final String base = normalizeBase(baseUrl);
     final List<String> lines = <String>[];
@@ -428,11 +438,69 @@ class PortalClient {
       return PortalInspection(lines: lines);
     }
     lines.add('الهدف: $base');
-    final _FormPlan? plan = await _fetchFormPlan(base);
-    if (plan == null) {
-      lines.add('✗ لم أجد نموذج تسجيل دخول (جرّبت: / ثم /login ثم /login.html)');
-      return PortalInspection(lines: lines);
+    bool reached = false;
+    for (final String path in _formPaths) {
+      final _SendResult result = await _sendWithRedirects(
+        http.Request('GET', Uri.parse('$base/').resolve(path))
+          ..followRedirects = false,
+        <String, String>{},
+        timeout: AppConstants.probeTimeout,
+      );
+      final http.Response? response = result.response;
+      if (response == null) {
+        lines.add('✗ $path : لا استجابة — ${result.error ?? 'تعذّر الاتصال'}');
+        continue;
+      }
+      reached = true;
+      final String? title = extractTitle(response.body);
+      final _FormPlan? plan =
+          _parseForm(response.body, result.finalUri, path);
+      if (plan != null) {
+        return _formReport(lines, plan, base);
+      }
+      lines.add('• $path : ردّ ${response.statusCode} بحجم '
+          '${response.body.length} بلا نموذج دخول '
+          '(العنوان: ${title ?? '—'})');
+      final Uri? soft = _softRedirect(response.body, result.finalUri);
+      if (soft != null) {
+        lines.add('  ↳ الصفحة تحوّل بامر مضمّن إلى: $soft — أتابع...');
+        final _SendResult softResult = await _sendWithRedirects(
+          http.Request('GET', soft)..followRedirects = false,
+          <String, String>{},
+          timeout: AppConstants.probeTimeout,
+        );
+        final http.Response? softResponse = softResult.response;
+        if (softResponse == null) {
+          lines.add('  ✗ الوجهة: لا استجابة — ${softResult.error ?? ''}');
+          continue;
+        }
+        final _FormPlan? softPlan =
+            _parseForm(softResponse.body, softResult.finalUri, soft.path);
+        if (softPlan != null) {
+          return _formReport(lines, softPlan, base);
+        }
+        lines.add('  • الوجهة: ردّ ${softResponse.statusCode} بحجم '
+            '${softResponse.body.length} بلا نموذج');
+      }
     }
+    if (!reached) {
+      lines.add('══ لم يصل الاتصال إلى الراوتر نهائياً — تأكد من: ══');
+      lines.add('1) الواي فاي متصل بشبكة الراوتر نفسها');
+      lines.add('2) باقة الجوال (البيانات الخلوية) موقوفة أثناء الفحص');
+      lines.add('3) افتح http://mobile.router في متصفح الهاتف للتأكد');
+    } else {
+      lines.add('══ وصلنا للبوابة لكن لا نموذج دخول مفهوم في الصفحات أعلاه ══');
+      lines.add('صوّر هذه الشاشة وأرسلها — سنضيف نمط بوابتك للمعمل');
+    }
+    return PortalInspection(lines: lines);
+  }
+
+  /// تقرير نموذج مكتشف: تفاصيله كاملة + تجربة رفض حية برمز وهمي.
+  Future<PortalInspection> _formReport(
+    List<String> lines,
+    _FormPlan plan,
+    String base,
+  ) async {
     lines.add('✓ نموذج الدخول وُجد في: ${plan.sourcePath}');
     lines.add('وجهة الإرسال: ${plan.action}');
     lines.add('الطريقة: ${plan.isPost ? 'POST' : 'GET'}');
@@ -474,7 +542,28 @@ class PortalClient {
   static final Map<String, _FormPlan> _planCache = <String, _FormPlan>{};
 
   /// مسارات البحث عن نموذج الدخول.
-  static const List<String> _formPaths = <String>['/', '/login', '/login.html'];
+  static const List<String> _formPaths = <String>[
+    '/',
+    '/login',
+    '/login.html',
+  ];
+
+  /// يكتشف تحويلاً مضمّناً في الصفحة (meta refresh أو JS location)
+  /// ويعيد الهدف — كثير من صفحات البوابات تحوّل بهذه الطريقة.
+  /// الاقتباسات في الأصناف تُكتب بترميز سداسي لتجنب كسر السلاسل.
+  static Uri? _softRedirect(String body, Uri base) {
+    final RegExpMatch? meta = RegExp(
+      r'http-equiv\s*=\s*[\x22\x27]?refresh[\x22\x27]?[^>]*url\s*=\s*([^\x22\x27>\s]+)',
+      caseSensitive: false,
+    ).firstMatch(body);
+    String? target = meta?.group(1);
+    target ??= RegExp(
+      r'location\.(?:href|assign|replace)\s*[(=]\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]',
+      caseSensitive: false,
+    ).firstMatch(body)?.group(1);
+    if (target == null || target.trim().isEmpty) return null;
+    return base.resolve(target.trim());
+  }
 
   /// يكتشف نموذج الدخول الحقيقي في البوابة.
   Future<_FormPlan?> _fetchFormPlan(String base) async {
@@ -499,6 +588,24 @@ class PortalClient {
           _planCache[key] = plan;
         }
         return plan;
+      }
+      // الصفحة تحوّل بامر مضمّن؟ نتابع الهدف بحثاً عن النموذج.
+      final Uri? soft = _softRedirect(response.body, result.finalUri);
+      if (soft == null) continue;
+      final _SendResult softResult = await _sendWithRedirects(
+        http.Request('GET', soft)..followRedirects = false,
+        jar,
+        timeout: AppConstants.probeTimeout,
+      );
+      final http.Response? softResponse = softResult.response;
+      if (softResponse == null) continue;
+      final _FormPlan? softPlan =
+          _parseForm(softResponse.body, softResult.finalUri, soft.path);
+      if (softPlan != null) {
+        if (!softPlan.noCache) {
+          _planCache[key] = softPlan;
+        }
+        return softPlan;
       }
     }
     return null;
@@ -526,8 +633,14 @@ class PortalClient {
         bestScore = score;
       }
     }
-    best ??= _parseOpenForm(html, pageUri);
-    if (best == null) return null;
+    if (best == null) {
+      best = _parseOpenForm(html, pageUri);
+    }
+    // فحص مباشر قبل النسخ — إسنادات الحلقة تُسقط ترقية غير-الصفري.
+    if (best == null) {
+      return null;
+    }
+    _FormShape chosen = best;
 
     String? chapPrefix;
     String? chapChallenge;
@@ -569,7 +682,7 @@ class PortalClient {
               pageUri,
             );
             if (senderShape != null) {
-              best = senderShape;
+              chosen = senderShape;
             }
             break;
           }
@@ -577,11 +690,6 @@ class PortalClient {
       }
     }
 
-    // فحص مباشر قبل النسخ — إسنادات الحلقة تُسقط ترقية غير-الصفري.
-    if (best == null) {
-      return null;
-    }
-    final _FormShape chosen = best;
     return _FormPlan(
       action: chosen.action,
       isPost: chosen.isPost,
@@ -657,7 +765,7 @@ class PortalClient {
     );
   }
 
-  /// احتياط: صفحة فيها وسم <form> بلا إغلاق — نعامل ما بعده كنموذج واحد.
+  /// احتياط: صفحة فيها وسم form بلا إغلاق — نعامل ما بعده كنموذج واحد.
   static _FormShape? _parseOpenForm(String html, Uri pageUri) {
     final RegExpMatch? open =
         RegExp(r'<form\b([^>]*)>', caseSensitive: false).firstMatch(html);
@@ -718,6 +826,7 @@ class PortalClient {
     );
   }
 
+  /// هل يشبه النص صفحة تسجيل دخول (نموذج + حقل كلمة مرور)؟
   static bool _looksPasswordField(String inner) {
     final String lowered = inner.toLowerCase();
     return lowered.contains('type="password"') ||
@@ -776,7 +885,8 @@ class PortalClient {
       if (ch == r'\' && i + 1 < raw.length) {
         final String next = raw[i + 1];
         if (next == 'x' && i + 3 < raw.length) {
-          final int? value = int.tryParse(raw.substring(i + 2, i + 4), radix: 16);
+          final int? value =
+              int.tryParse(raw.substring(i + 2, i + 4), radix: 16);
           if (value != null) {
             out.writeCharCode(value);
             i += 4;
@@ -865,7 +975,8 @@ class PortalClient {
     if (plan.isPost) {
       request = http.Request('POST', plan.action)..bodyFields = fields;
     } else {
-      request = http.Request('GET', plan.action.replace(queryParameters: fields));
+      request =
+          http.Request('GET', plan.action.replace(queryParameters: fields));
     }
     request.followRedirects = false;
     return _sendWithRedirects(
@@ -878,9 +989,9 @@ class PortalClient {
   /// إرسال طلب + متابعة تحويلات 3xx يدوياً (حتى 3 قفزات) بحمل الكوكيز.
   Future<_SendResult> _sendWithRedirects(
     http.Request request,
-    Map<String, String> jar,
-    {required Duration timeout}
-  ) async {
+    Map<String, String> jar, {
+    required Duration timeout,
+  }) async {
     final Map<String, String> cookies = <String, String>{
       for (final MapEntry<String, String> e in jar.entries) e.key: e.value,
     };
@@ -895,7 +1006,7 @@ class PortalClient {
           current.headers['cookie'] = header;
         }
         final http.StreamedResponse streamed =
-            await current.send().timeout(timeout);
+            await _httpClient.send(current).timeout(timeout);
         _absorbCookies(streamed.headers['set-cookie'], cookies);
         final http.Response response =
             await http.Response.fromStream(streamed);
