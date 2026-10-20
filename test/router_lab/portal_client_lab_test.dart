@@ -43,6 +43,10 @@ void main() {
     // العقد: كلمة المرور تصل فعلاً إلى وجهة نموذج الدخول.
     expect(router.loginPostReceived, isTrue,
         reason: 'المحرك يجب أن يرسل الرمز إلى صفحة تسجيل الدخول نفسها');
+    // العقد: الحقول المخفية للنموذج تُرسل كما هي كالمتصفح تماماً.
+    expect(router.lastLoginFields?['popup'], 'true',
+        reason: 'الحقول المخفية يجب أن تُرسل مع الطلب');
+    expect(router.lastLoginFields?['username'], goodCode);
     expect(outcome.success, isTrue,
         reason: 'الرمز الصحيح يجب أن يُقبل من بوابة حقيقية');
   });
@@ -177,7 +181,10 @@ void main() {
         reason: 'كلمة invalid داخل شيفرة الصفحة ليست رفضاً للرمز الصحيح');
   });
 
-  test('بوابة تقبل أي رمز: لا يُعلن نجاح لرمز خاطئ (بلاغ المستخدم)', () async {
+  test('بوابة تقبل أي رمز: العميل يبلّغ بما فعله الراوتر بحقيقة', () async {
+    // الراوتر هنا قبل الرمز فعلاً — فالعميل يبلّغ بالحقيقة، والحماية من
+    // «كل الرموز صحيحة» عبر اختبار التمييز في المتحكم (اختباراته في
+    // ملف المتحكم).
     final LabRouter router = LabRouter(
       mode: LabRouterMode.acceptsAnything,
       validCodes: <String>{goodCode},
@@ -194,7 +201,7 @@ void main() {
 
     print('📜 سجل الروتر: ${router.log}');
     print('⚖️ حكم المحرك: نجاح=${outcome.success} | ${outcome.message}');
-    expect(outcome.success, isFalse,
-        reason: 'بوابة تقبل أي شيء يجب أن تُوسم وليس إعلان نجاح عادي');
+    expect(outcome.success, isTrue,
+        reason: 'الراوتر قبل الرمز فعلاً — يجب الإبلاغ بالحقيقة');
   });
 }

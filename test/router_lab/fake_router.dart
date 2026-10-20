@@ -30,7 +30,7 @@ class LabMd5 {
   const LabMd5._();
 
   static String hash(String input) {
-    final List<int> bytes = input.codeUnits;
+    final List<int> bytes = utf8.encode(input);
     final int bitLen = bytes.length * 8;
     final List<int> msg = <int>[...bytes, 0x80];
     while (msg.length % 64 != 56) {
@@ -145,6 +145,9 @@ class LabRouter {
 
   final List<String> log = <String>[];
 
+  /// آخر حقول استلمها POST /login (دليل ما أرسله المحرك فعلاً).
+  Map<String, String>? lastLoginFields;
+
   HttpServer? _server;
 
   String get baseUrl => 'http://127.0.0.1:${_server!.port}';
@@ -241,6 +244,7 @@ class LabRouter {
   ) async {
     final String username = (fields['username'] ?? '').trim();
     final String password = fields['password'] ?? '';
+    lastLoginFields = fields;
 
     final bool ok;
     if (mode == LabRouterMode.acceptsAnything) {

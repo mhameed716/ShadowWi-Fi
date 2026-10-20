@@ -9,7 +9,7 @@ class AppConstants {
   static const String appSubtitle = 'أدوات بوابة الشبكة';
 
   /// إصدار التطبيق المعروض في الواجهة (يزامن pubspec.yaml يدوياً).
-  static const String appVersion = '1.7.1';
+  static const String appVersion = '1.8.0';
 
   /// اسم الباقة وعنوان القناة الأصلية.
   static const String packageName = 'com.shadowwifi.app';

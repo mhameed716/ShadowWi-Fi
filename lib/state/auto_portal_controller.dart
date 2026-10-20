@@ -103,6 +103,10 @@ class AutoPortalController extends ChangeNotifier {
   /// نتيجة آخر تجربة يدوية: true نجاح / false فشل / null قيد التنفيذ.
   bool? manualSuccess;
 
+  /// هل تبيّن أن البوابة تقبل أي رمز؟ (يفشل اختبار التمييز) — عندئذ
+  /// يتوقف البحث كله لأن تحديد الرمز الصحيح مستحيل بنيوياً.
+  bool acceptsAnything = false;
+
   // --------------------------------------------------------- مساعدات ثابتة
   /// تنسيق الرقم بطول محدد بأصفار يسارية (الافتراضي 10).
   static String formatCode(int value, [int length = 10]) =>
@@ -147,6 +151,36 @@ class AutoPortalController extends ChangeNotifier {
 
   /// تقييد التأخير بين 500 و1000 مللي ثانية.
   static int clampDelay(int ms) => ms.clamp(500, 1000).toInt();
+
+  /// رمز تمييز: نسخة الرمز بآخر خانة رقمية مزاحة +1 — يجب أن يُرفض من
+  /// البوابة السليمة؛ قبوله يعني أن البوابة تقبل أي شيء.
+  static String _decoyFor(String code) {
+    if (code.isEmpty) return '0';
+    final int last = code.codeUnitAt(code.length - 1);
+    if (last >= 0x30 && last <= 0x39) {
+      final int shifted = (last - 0x30 + 1) % 10;
+      return code.substring(0, code.length - 1) +
+          String.fromCharCode(0x30 + shifted);
+    }
+    final String replacement = last == 0x78 ? 'y' : 'x';
+    return code.substring(0, code.length - 1) + replacement;
+  }
+
+  /// اختبار التمييز: رمز وهمي فوري بعد أي نجاح مرشَّح — لا يُحسب من
+  /// عدّاد المحاولات، ويظهر في السجل للشفافية الكاملة.
+  Future<bool> _verifyDecoy(String url, String code) async {
+    final String decoy = _decoyFor(code);
+    if (decoy == code) return false;
+    bool ok = false;
+    try {
+      ok = await _attemptFn(url, decoy);
+    } catch (_) {
+      ok = false;
+    }
+    if (_disposed) return false;
+    _pushLog(decoy, ok);
+    return ok;
+  }
 
   /// تأخير افتراضي عشوائي 500-1000 مللي ثانية (حماية الاتصال وIP).
   static int _defaultDelay() => 500 + Random().nextInt(501);
@@ -225,6 +259,21 @@ class AutoPortalController extends ChangeNotifier {
       ok = false;
     }
     if (_disposed) return;
+    if (ok) {
+      // نفس قفل التمييز: رمز وهمي فوري قبل تصديق البوابة.
+      manualResult = 'رمز مرشَّح — جارٍ اختبار التمييز...';
+      notifyListeners();
+      final bool decoyOk = await _verifyDecoy(url, code);
+      if (_disposed) return;
+      if (decoyOk) {
+        acceptsAnything = true;
+        manualTesting = false;
+        manualSuccess = false;
+        manualResult = 'البوابة تقبل أي رمز — لا يمكن تأكيد هذا الرمز';
+        notifyListeners();
+        return;
+      }
+    }
     manualTesting = false;
     manualSuccess = ok;
     manualResult = ok
@@ -279,6 +328,7 @@ class AutoPortalController extends ChangeNotifier {
     monitoring = true;
     paused = false;
     smartPaused = false;
+    acceptsAnything = false;
     error = null;
     // يبدأ دائماً من الرقم المكتوب في الخانة ويصعد تصاعدياً (الفارغ = 1،
     // والاستعادة تعيد ملء الخانة بنقطة التوقف تلقائياً).
@@ -385,6 +435,23 @@ class AutoPortalController extends ChangeNotifier {
       _pushLog(code, ok);
 
       if (ok) {
+        // اختبار التمييز: قبل إعلان أي نجاح نجرّب رمزاً وهمياً فوراً —
+        // إن قَبِلته البوابة أيضاً فهي تقبل أي شيء ولا يُعلن رمز صحيح.
+        statusText = 'رمز مرشَّح $code — جارٍ اختبار التمييز...';
+        notifyListeners();
+        final bool decoyOk = await _verifyDecoy(url, code);
+        if (_disposed) return;
+        if (decoyOk) {
+          acceptsAnything = true;
+          monitoring = false;
+          paused = false;
+          smartPaused = false;
+          statusText =
+              'البوابة تقبل أي رمز — أُوقف البحث (تحديد الصحيح مستحيل)';
+          await _persist();
+          notifyListeners();
+          return;
+        }
         final FoundCode found =
             FoundCode(code: code, discoveredAt: DateTime.now());
         foundCodes = <FoundCode>[found, ...foundCodes].take(20).toList();

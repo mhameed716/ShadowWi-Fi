@@ -338,5 +338,50 @@ void main() {
       expect(controller.portalUrl, 'http://gw.test/login');
       await temp.delete(recursive: true);
     });
+
+    test('رمز مرشَّح يجتاز التمييز ⇒ يُسجَّل والبوابة ليست تقبل أي شيء', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_decoy1');
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        // يقبل '0000000002' فقط — رمز التمييز '0000000003' يُرفض.
+        attemptFn: (String url, String code) async => code == '0000000002',
+        delayPickFn: () => 500,
+      );
+      controller.setPortalUrl('http://portal.test/decoy1');
+      await controller.start();
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (!controller.smartPaused && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      expect(controller.foundCodes.first.code, '0000000002');
+      expect(controller.acceptsAnything, isFalse);
+      // اختبار التمييز لا يُحسب من عدّاد المحاولات: محاولتان فقط.
+      expect(controller.attempts, 2);
+      await temp.delete(recursive: true);
+    });
+
+    test('رمز التمييز ينجح أيضاً ⇒ بوابة تقبل أي رمز: توقف بلا تسجيل', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_decoy2');
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async => true,
+        delayPickFn: () => 500,
+      );
+      controller.setPortalUrl('http://portal.test/decoy2');
+      await controller.start();
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!controller.acceptsAnything && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      expect(controller.acceptsAnything, isTrue);
+      expect(controller.foundCodes, isEmpty);
+      expect(controller.monitoring, isFalse);
+      expect(controller.statusText, contains('تقبل أي رمز'));
+      await temp.delete(recursive: true);
+    });
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../data/services/portal_client.dart';
 import '../../../data/services/state_store.dart';
 import '../../../state/auto_portal_controller.dart';
 import '../../widgets/section_card.dart';
@@ -43,6 +44,83 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
     _urlField.dispose();
     _urlFocus.dispose();
     super.dispose();
+  }
+
+  /// فاحص البوابة: يريك بالتفصيل ما اكتُشف من نموذج وماذا يُرسل فعلاً
+  /// وكيف ردّ الراوتر — بشفافية كاملة.
+  Future<void> _openInspector(
+    BuildContext context,
+    AutoPortalController wifi,
+  ) async {
+    if (wifi.portalUrl.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('اكشف البوابة أولاً — لا يوجد رابط')),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: FutureBuilder<PortalInspection>(
+              future: PortalClient().inspect(wifi.portalUrl.trim()),
+              builder:
+                  (BuildContext c, AsyncSnapshot<PortalInspection> snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      CircularProgressIndicator(),
+                      SizedBox(height: 12),
+                      Text('جارٍ فحص البوابة...'),
+                    ],
+                  );
+                }
+                final PortalInspection inspection = snap.data ??
+                    const PortalInspection(lines: <String>['تعذّر الفحص']);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'فاحص البوابة — تقرير كامل',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: inspection.lines
+                              .map(
+                                (String line) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 3,
+                                  ),
+                                  child: Text(
+                                    line,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _onChanged() {
@@ -225,6 +303,42 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
                 icon: const Icon(Icons.search, size: 18),
                 label: const Text('فحص البوابة الآن'),
               ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _openInspector(context, wifi),
+                icon: const Icon(Icons.manage_search, size: 18),
+                label: const Text('فاحص البوابة — ماذا يُرسل فعلاً؟'),
+              ),
+              if (wifi.acceptsAnything) ...<Widget>[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.deepOrange.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.deepOrange.withOpacity(0.4),
+                    ),
+                  ),
+                  child: const Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.deepOrange,
+                        size: 20,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'البوابة تقبل أي رمز — أُوقف البحث لأن تحديد '
+                          'الرمز الصحيح مستحيل على هذه البوابة',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
