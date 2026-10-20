@@ -1,7 +1,9 @@
 name: بناء تطبيق Android (APK)
 
-# التشغيل اليدوي فقط — لا يُبنى شيء إلا بأمر صريح من المستخدم
+# التشغيل التلقائي: الاختبارات ومعمل الروتر عند كل رفع — بناء APK والنشر
+# لا يتمان إلا برفع تحمل الكلمة المفتاحية [release] في رسالة الرفع.
 on:
+  push:
   workflow_dispatch:
 
 permissions:
@@ -37,6 +39,7 @@ jobs:
         run: set -o pipefail && flutter test --reporter github 2>&1 | tee ci_test.log
 
       - name: بناء APK (Release)
+        if: ${{ contains(github.event.head_commit.message, '[release]') }}
         run: set -o pipefail && flutter build apk --release 2>&1 | tee ci_build.log
 
       - name: تشخيص أي فشل
@@ -72,6 +75,7 @@ jobs:
           fi
 
       - name: تجهيز ملف التوزيع
+        if: ${{ contains(github.event.head_commit.message, '[release]') }}
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | cut -d':' -f2 | cut -d'+' -f1 | tr -d ' ')
           mkdir -p dist
@@ -80,6 +84,7 @@ jobs:
           ls -lh dist/
 
       - name: رفع الملف كـ Artifact
+        if: ${{ contains(github.event.head_commit.message, '[release]') }}
         uses: actions/upload-artifact@v4
         with:
           name: ShadowWi-Fi-APK-${{ env.APK_VERSION }}
@@ -87,6 +92,7 @@ jobs:
           if-no-files-found: error
 
       - name: نشر إصدار برابط تحميل مباشر فريد
+        if: ${{ contains(github.event.head_commit.message, '[release]') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
