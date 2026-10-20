@@ -551,6 +551,32 @@ class PortalClient {
       }
     }
 
+    // في قوالب CHAP (ميكروتك) النموذج المرئي action="#" وعنصر نائب —
+    // الإرسال الفعلي عبر نموذج مخفي تستدعيه الشيفرة document.sendin.submit().
+    // نتبع نداء الإرسال إلى نموذجه ونستخدم وجهته وحقوله الحقيقية.
+    if (chapPrefix != null || plainChap) {
+      final RegExpMatch? submitCall =
+          RegExp(r'document\.(\w+)\.submit\(\)').firstMatch(html);
+      if (submitCall != null) {
+        final String senderName = submitCall.group(1) ?? '';
+        for (final RegExpMatch m in forms) {
+          final String attrs = m.group(1) ?? '';
+          if (_attr(attrs, 'name').trim().toLowerCase() ==
+              senderName.toLowerCase()) {
+            final _FormShape? senderShape = _parseSenderShape(
+              attrs,
+              m.group(2) ?? '',
+              pageUri,
+            );
+            if (senderShape != null) {
+              best = senderShape;
+            }
+            break;
+          }
+        }
+      }
+    }
+
     return _FormPlan(
       action: best.action,
       isPost: best.isPost,
@@ -635,6 +661,55 @@ class PortalClient {
       open.group(1) ?? '',
       html.substring(open.end),
       pageUri,
+    );
+  }
+
+  /// نموذج الإرسال المخفي في CHAP: حقوله hidden بطبيعته، والحقلان
+  /// username/password يكتب فيهما المتصفح القيم قبل الإرسال.
+  static _FormShape? _parseSenderShape(
+    String attrs,
+    String inner,
+    Uri pageUri,
+  ) {
+    final String actionRaw = _attr(attrs, 'action').trim();
+    final Uri action =
+        actionRaw.isEmpty ? pageUri : pageUri.resolve(actionRaw);
+    final String method = _attr(attrs, 'method').trim().toLowerCase();
+    final bool isPost = method != 'get';
+
+    final List<MapEntry<String, String>> hidden = <MapEntry<String, String>>[];
+    String? usernameField;
+    String? passwordField;
+
+    final RegExp inputRx =
+        RegExp(r'<input\b([^>]*?)/?>', caseSensitive: false);
+    for (final RegExpMatch m in inputRx.allMatches(inner)) {
+      final String tag = m.group(1) ?? '';
+      final String type = _attr(tag, 'type').trim().toLowerCase();
+      final String name = _attr(tag, 'name').trim();
+      if (name.isEmpty) continue;
+      final String value = _attr(tag, 'value');
+      if (type == 'hidden' || type.isEmpty) {
+        final String lowered = name.toLowerCase();
+        if (lowered == 'username') {
+          usernameField ??= name;
+        } else if (lowered == 'password') {
+          passwordField ??= name;
+        } else {
+          hidden.add(MapEntry<String, String>(name, value));
+        }
+      } else {
+        hidden.add(MapEntry<String, String>(name, value));
+      }
+    }
+    return _FormShape(
+      action: action,
+      isPost: isPost,
+      hidden: hidden,
+      usernameField: usernameField,
+      passwordField: passwordField,
+      submitName: null,
+      submitValue: null,
     );
   }
 
