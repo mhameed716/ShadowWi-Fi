@@ -143,6 +143,23 @@ class SystemChannel {
   }
 
   /// هل الجهاز متصل فعلياً بالشبكة المطلوبة الآن؟
+  /// حالة التحقق من الشبكة (validated / captivePortal) من النظام.
+  Future<Map<String, dynamic>> captiveState() async {
+    try {
+      final Map<dynamic, dynamic>? value =
+          await _channel.invokeMethod<dynamic>('getCaptiveState');
+      if (value == null) return <String, dynamic>{};
+      return value.map<String, dynamic>(
+        (dynamic key, dynamic val) =>
+            MapEntry<String, dynamic>(key.toString(), val),
+      );
+    } on PlatformException {
+      return <String, dynamic>{};
+    } on MissingPluginException {
+      return <String, dynamic>{};
+    }
+  }
+
   /// حالة الاقتران الخام (SCANNING/ASSOCIATED/FOUR_WAY_HANDSHAKE/...).
   Future<String> supplicantState() async {
     try {

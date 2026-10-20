@@ -86,6 +86,7 @@ class MainActivity : FlutterActivity() {
                         result.success(isConnectedTo(ssid))
                     }
                     "getSupplicantState" -> result.success(readSupplicantState())
+                    "getCaptiveState" -> result.success(readCaptiveState())
                     "forgetNetwork" -> {
                         val ssid = call.argument<String>("ssid") ?: ""
                         result.success(forgetNetwork(ssid))
@@ -409,6 +410,40 @@ class MainActivity : FlutterActivity() {
         } catch (error: Exception) {
             false
         }
+    }
+
+    /**
+     * حالة التحقق من الشبكة عبر ConnectivityManager:
+     * validated = الإنترنت مفتوح، captivePortal = بوابة إجبارية مكتشفة
+     * من النظام نفسه (NET_CAPABILITY_VALIDATED/CAPTIVE_PORTAL).
+     */
+    private fun readCaptiveState(): Map<String, Any?> {
+        val out = mutableMapOf<String, Any?>()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val connectivityManager =
+                    getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val network = connectivityManager?.activeNetwork
+                val capabilities = network?.let {
+                    connectivityManager.getNetworkCapabilities(it)
+                }
+                out["validated"] =
+                    capabilities?.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                    ) == true
+                out["captivePortal"] =
+                    capabilities?.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL
+                    ) == true
+            } else {
+                out["validated"] = null
+                out["captivePortal"] = null
+            }
+        } catch (error: Exception) {
+            out["validated"] = null
+            out["captivePortal"] = null
+        }
+        return out
     }
 
     /**

@@ -3,13 +3,15 @@ import 'package:provider/provider.dart';
 
 import '../core/app_constants.dart';
 import '../core/theme/app_theme.dart';
+import '../state/auto_portal_controller.dart';
 import '../state/portal_controller.dart';
+import 'features/auto_portal/auto_portal_screen.dart';
 import 'features/diagnostics/diagnostics_screen.dart';
 import 'features/logs/logs_screen.dart';
 import 'features/networks/networks_screen.dart';
 import 'features/portal/portal_screen.dart';
 
-/// الهيكل الرئيسي: شريط علوي + تنقل سفلي بأربعة أقسام.
+/// الهيكل الرئيسي: شريط علوي + تنقل سفلي بخمسة أقسام.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -19,13 +21,47 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  AutoPortalController? _autoListened;
 
   static const List<Widget> _screens = <Widget>[
     PortalScreen(),
     DiagnosticsScreen(),
     LogsScreen(),
     NetworksScreen(),
+    AutoPortalScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final AutoPortalController auto = context.read<AutoPortalController>();
+      _autoListened = auto;
+      auto.addListener(_onAutoPortalChanged);
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoListened?.removeListener(_onAutoPortalChanged);
+    super.dispose();
+  }
+
+  /// الظهور التلقائي: عند اكتشاف بوابة مقيّدة تُفتح الواجهة الخامسة فوراً.
+  void _onAutoPortalChanged() {
+    final AutoPortalController? auto = _autoListened;
+    if (auto == null || !mounted) return;
+    if (auto.portalDetected && _index != 4) {
+      setState(() => _index = 4);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم اكتشاف بوابة مقيدة — فُتحت الواجهة التلقائية'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -94,6 +130,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.wifi_tethering_outlined),
             selectedIcon: Icon(Icons.wifi_tethering),
             label: 'الشبكات',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bolt_outlined),
+            selectedIcon: Icon(Icons.bolt),
+            label: 'بوابة تلقائية',
           ),
         ],
       ),
