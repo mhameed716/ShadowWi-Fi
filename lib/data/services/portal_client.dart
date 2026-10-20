@@ -577,14 +577,19 @@ class PortalClient {
       }
     }
 
+    // فحص مباشر قبل النسخ — إسنادات الحلقة تُسقط ترقية غير-الصفري.
+    if (best == null) {
+      return null;
+    }
+    final _FormShape chosen = best;
     return _FormPlan(
-      action: best.action,
-      isPost: best.isPost,
-      hidden: best.hidden,
-      usernameField: best.usernameField,
-      passwordField: best.passwordField,
-      submitName: best.submitName,
-      submitValue: best.submitValue,
+      action: chosen.action,
+      isPost: chosen.isPost,
+      hidden: chosen.hidden,
+      usernameField: chosen.usernameField,
+      passwordField: chosen.passwordField,
+      submitName: chosen.submitName,
+      submitValue: chosen.submitValue,
       chapPrefix: chapPrefix,
       chapChallenge: chapChallenge,
       plainChap: plainChap,
