@@ -262,7 +262,7 @@ void main() {
 
   test('الفاحص على بوابة بلا نموذج يقول: وصلنا ولا نموذج', () async {
     final LabRouter router = LabRouter(
-      mode: LabRouterMode.openStatusTrap,
+      mode: LabRouterMode.noForm,
       validCodes: <String>{goodCode},
     );
     await router.start();

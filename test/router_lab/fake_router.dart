@@ -23,6 +23,10 @@ enum LabRouterMode {
 
   /// بوابة معطلة/مفتوحة تقبل أي رمز — بلاغ المستخدم الحقيقي.
   acceptsAnything,
+
+  /// بوابة بلا نموذج دخول في أي مسار (صفحات ترحيبية فقط) — لاختبار
+  /// صدق الفاحص في التمييز بين «لم نصل» و«وصلنا ولا نموذج».
+  noForm,
 }
 
 /// تنفيذ MD5 مكتمل (RFC 1321) خاص بالمعمل — المدخلات Latin-1 فقط.
@@ -181,6 +185,10 @@ class LabRouter {
 
   Future<void> _route(HttpRequest request) async {
     final String path = request.uri.path;
+    if (mode == LabRouterMode.noForm && request.method == 'GET') {
+      await _html(request, 200, _welcomePage());
+      return;
+    }
 
     if (request.method == 'POST') {
       final String body = await utf8.decoder.bind(request).join();
