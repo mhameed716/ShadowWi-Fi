@@ -2,6 +2,7 @@ name: بناء تطبيق Android (APK)
 
 # يُبنى تلقائياً عند كل رفع + يمكن تشغيله يدوياً من تبويب Actions
 on:
+  push:
   workflow_dispatch:
 
 permissions:
