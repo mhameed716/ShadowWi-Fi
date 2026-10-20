@@ -412,19 +412,22 @@ class AutoPortalController extends ChangeNotifier {
     try {
       final AutoPortalState state = await _store.load();
       if (_disposed) return;
+      // لا تُطبَّق القيم المحفوظة إلا مع جلسة سابقة حقيقية (الحفظ يحدث بعد
+      // كل محاولة فقط ⇒ لا تُخزَّن حالة بـ lastNumber = 0). هذا يمنع سباق
+      // الاستعادة المتأخرة مع أي ضبط مبكر للحقول قبل اكتمال التحميل.
       if (state.lastNumber > 0) {
         currentNumber = state.lastNumber;
         // الخانة تعرض نقطة الاستئناف — «بدء تلقائي» يكمل منها.
         startInput = state.lastNumber.toString();
         statusText = 'استُعيدت الجلسة — آخر رقم ${formatCode(state.lastNumber, codeLength)}';
-      }
-      if (state.portalUrl.isNotEmpty) portalUrl = state.portalUrl;
-      if (state.foundCodes.isNotEmpty) foundCodes = state.foundCodes;
-      if (state.codeLength >= minLength && state.codeLength <= maxLength) {
-        codeLength = state.codeLength;
-      }
-      if (state.step >= 1) {
-        step = state.step;
+        if (state.portalUrl.isNotEmpty) portalUrl = state.portalUrl;
+        if (state.foundCodes.isNotEmpty) foundCodes = state.foundCodes;
+        if (state.codeLength >= minLength && state.codeLength <= maxLength) {
+          codeLength = state.codeLength;
+        }
+        if (state.step >= 1) {
+          step = state.step;
+        }
       }
       notifyListeners();
     } catch (_) {
