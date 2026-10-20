@@ -166,9 +166,9 @@ class LabRouter {
 
   String get baseUrl => 'http://127.0.0.1:${_server!.port}';
 
-  /// هل وصل طلب دخول فعلي إلى صفحة تسجيل الدخول (/login)؟
+  /// هل وصل طلب دخول فعلي إلى وجهة تسجيل الدخول (/login أو /login.html)؟
   bool get loginPostReceived =>
-      log.any((String line) => line.startsWith('POST /login '));
+      log.any((String line) => line.startsWith('POST /login'));
 
   Future<void> start() async {
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

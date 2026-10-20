@@ -498,6 +498,11 @@ class PortalClient {
           lines.add('  ✗ الوجهة: لا استجابة — ${softResult.error ?? ''}');
           continue;
         }
+        final _FormPlan? softPlan =
+            _parseForm(softResponse.body, softResult.finalUri, soft.path);
+        if (softPlan != null) {
+          return _formReport(lines, softPlan, base);
+        }
         final _FormPlan? softVirtual = _extractVirtualPlan(
           softResponse.body,
           softResult.finalUri,
@@ -505,11 +510,6 @@ class PortalClient {
         );
         if (softVirtual != null) {
           return _formReport(lines, softVirtual, base);
-        }
-        final _FormPlan? softPlan =
-            _parseForm(softResponse.body, softResult.finalUri, soft.path);
-        if (softPlan != null) {
-          return _formReport(lines, softPlan, base);
         }
         lines.add('  • الوجهة: ردّ ${softResponse.statusCode} بحجم '
             '${softResponse.body.length} بلا نموذج');
@@ -796,14 +796,6 @@ class PortalClient {
       );
       final http.Response? softResponse = softResult.response;
       if (softResponse == null) continue;
-      final _FormPlan? softVirtual = _extractVirtualPlan(
-        softResponse.body,
-        softResult.finalUri,
-        soft.path,
-      );
-      if (softVirtual != null) {
-        return softVirtual;
-      }
       final _FormPlan? softPlan =
           _parseForm(softResponse.body, softResult.finalUri, soft.path);
       if (softPlan != null) {
@@ -811,6 +803,14 @@ class PortalClient {
           _planCache[key] = softPlan;
         }
         return softPlan;
+      }
+      final _FormPlan? softVirtual = _extractVirtualPlan(
+        softResponse.body,
+        softResult.finalUri,
+        soft.path,
+      );
+      if (softVirtual != null) {
+        return softVirtual;
       }
     }
     return null;
