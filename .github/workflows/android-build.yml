@@ -36,7 +36,7 @@ jobs:
         run: set -o pipefail && flutter pub get 2>&1 | tee ci_pubget.log
 
       - name: تشغيل الاختبارات
-        run: set -o pipefail && flutter test --reporter github 2>&1 | tee ci_test.log
+        run: set -o pipefail && flutter test --reporter compact 2>&1 | tee ci_test.log
 
       - name: بناء APK (Release)
         if: ${{ contains(github.event.head_commit.message, '[release]') }}
@@ -65,13 +65,16 @@ jobs:
           # قسم الاستثناء من سجل الاختبار + آخر الأسطر (بعد فك \r)
           if [ -f ci_test.log ]; then
             tr '\r' '\n' < ci_test.log | grep -v '^[[:space:]]*$' > /tmp/test_clean.log
-            awk '/EXCEPTION CAUGHT BY|Test failed|Failed to load|Compilation|Expected:|Actual:|Which:|The following|was thrown|Error:/{print; count++} count>=8{exit}' /tmp/test_clean.log |
+            grep -E '\-\[0-9]+\]|\[E\]|✖|some tests failed|Some tests failed' /tmp/test_clean.log |
+              head -n 4 |
+              while IFS= read -r line; do
+                echo "::error::FAIL|${line:0:400}"
+              done
+            grep -E 'Expected:|Actual:|Which:|Failed to load|Compilation|Error:' /tmp/test_clean.log |
+              head -n 6 |
               while IFS= read -r line; do
                 echo "::error::EXC|${line:0:600}"
               done
-            tail -n 3 /tmp/test_clean.log | while IFS= read -r line; do
-              echo "::error::T|${line:0:600}"
-            done
           fi
 
       - name: تجهيز ملف التوزيع

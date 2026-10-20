@@ -376,11 +376,13 @@ void main() {
       while (!controller.acceptsAnything && DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
+      // نص الحالة قبل stop() — لأن الإيقاف اليدوي يكتب رسالته الخاصة.
+      final String flaggedStatus = controller.statusText;
       await controller.stop();
       expect(controller.acceptsAnything, isTrue);
       expect(controller.foundCodes, isEmpty);
       expect(controller.monitoring, isFalse);
-      expect(controller.statusText, contains('تقبل أي رمز'));
+      expect(flaggedStatus, contains('تقبل أي رمز'));
       await temp.delete(recursive: true);
     });
   });
