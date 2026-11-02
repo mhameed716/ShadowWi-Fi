@@ -403,7 +403,7 @@ void main() {
       expect(controller.foundCodes, isEmpty);
       expect(controller.monitoring, isFalse);
       expect(flaggedStatus, contains('تقبل أي رمز'));
-      await controller.dispose();
+      controller.dispose();
       await temp.delete(recursive: true);
     });
 
@@ -430,7 +430,7 @@ void main() {
       await controller.stop();
       expect(tried, isNotEmpty,
           reason: 'المحرك يجب أن يبدأ وحده فور الارتباط بلا ضغط يدوي');
-      await controller.dispose();
+      controller.dispose();
       await temp.delete(recursive: true);
     });
 
@@ -459,7 +459,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 3500));
       expect(tried.length, afterStop,
           reason: 'الإيقاف اليدوي يجب أن يُحترم حتى إعادة الارتباط الجديدة');
-      await controller.dispose();
+      controller.dispose();
       await temp.delete(recursive: true);
     });
 
@@ -478,7 +478,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       expect(controller.monitoring, isFalse,
           reason: 'ارتباط بشبكة غير الهدف يجب ألا يشغّل المحرك');
-      await controller.dispose();
+      controller.dispose();
       await temp.delete(recursive: true);
     });
   });
