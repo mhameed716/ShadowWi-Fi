@@ -383,6 +383,58 @@ class _AutoPortalScreenState extends State<AutoPortalScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.inputFill,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Icon(Icons.link, size: 18,
+                            color: AppColors.textSecondary),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'تشغيل تلقائي فور الارتباط بالشبكة',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        Switch(
+                          value: wifi.autoRun,
+                          onChanged: (bool value) => wifi.setAutoRun(value),
+                        ),
+                      ],
+                    ),
+                    if (wifi.autoRun) ...<Widget>[
+                      const SizedBox(height: 4),
+                      TextField(
+                        onChanged: wifi.setLinkSsid,
+                        decoration: const InputDecoration(
+                          labelText: 'شبكة الهدف (اختياري)',
+                          hintText: 'فارغ = أي شبكة واي فاي • مثال: MyNet',
+                          prefixIcon: Icon(Icons.wifi, size: 20),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'أول ما يرتبط الهاتف بالشبكة يُكشف البوابة ويبدأ '
+                        'المحرك وحده — بلا أي ضغط يدوي',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: <Widget>[
                   const Text(

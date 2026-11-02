@@ -38,6 +38,8 @@ class AutoPortalState {
     this.foundCodes = const <FoundCode>[],
     this.codeLength = 10,
     this.step = 1,
+    this.autoRun = false,
+    this.linkSsid = '',
   });
 
   /// آخر رقم تم فحصه.
@@ -55,6 +57,12 @@ class AutoPortalState {
   /// قيمة الزيادة المحفوظة.
   final int step;
 
+  /// هل التشغيل التلقائي عند الارتباط بالشبكة مفعّل؟
+  final bool autoRun;
+
+  /// شبكة الهدف للربط التلقائي (فارغة = أي شبكة واي فاي).
+  final String linkSsid;
+
   /// نسخة قابلة للتخزين.
   Map<String, dynamic> toJson() => <String, dynamic>{
         'lastNumber': lastNumber,
@@ -64,6 +72,8 @@ class AutoPortalState {
             .toList(),
         'codeLength': codeLength,
         'step': step,
+        'autoRun': autoRun,
+        'linkSsid': linkSsid,
       };
 
   /// استعادة من التخزين.
@@ -86,6 +96,8 @@ class AutoPortalState {
       foundCodes: codes,
       codeLength: int.tryParse((json['codeLength'] ?? 10).toString()) ?? 10,
       step: int.tryParse((json['step'] ?? 1).toString()) ?? 1,
+      autoRun: (json['autoRun'] ?? false) == true,
+      linkSsid: (json['linkSsid'] ?? '').toString(),
     );
   }
 }

@@ -108,6 +108,21 @@ void main() {
       }
     });
 
+    test('حفظ واستعادة إعدادات الربط التلقائي', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_auto0');
+      final StateStore store = StateStore(directory: temp);
+      await store.save(const AutoPortalState(
+        lastNumber: 9,
+        autoRun: true,
+        linkSsid: 'MyNet',
+      ));
+      final AutoPortalState loaded = await store.load();
+      expect(loaded.autoRun, isTrue);
+      expect(loaded.linkSsid, 'MyNet');
+      expect(loaded.lastNumber, 9);
+      await temp.delete(recursive: true);
+    });
+
     test('قراءة بلا ملف سابق تعيد حالة فارغة', () async {
       final Directory temp = await Directory.systemTemp.createTemp('ap_test2');
       try {
@@ -388,6 +403,82 @@ void main() {
       expect(controller.foundCodes, isEmpty);
       expect(controller.monitoring, isFalse);
       expect(flaggedStatus, contains('تقبل أي رمز'));
+      await controller.dispose();
+      await temp.delete(recursive: true);
+    });
+
+    test('الربط التلقائي: أول ارتباط بالشبكة يبدأ المحرك وحده', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_auto1');
+      final List<String> tried = <String>[];
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async {
+          tried.add(code);
+          return false;
+        },
+        delayPickFn: () => 500,
+        wifiSsidFn: () async => 'MyNet',
+      );
+      controller.setPortalUrl('http://portal.test/auto1');
+      // الهاتف مرتبط بالشبكة الآن — التفعيل يبدأ المحرك فوراً.
+      controller.setAutoRun(true);
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (tried.isEmpty && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      expect(tried, isNotEmpty,
+          reason: 'المحرك يجب أن يبدأ وحده فور الارتباط بلا ضغط يدوي');
+      await controller.dispose();
+      await temp.delete(recursive: true);
+    });
+
+    test('الربط التلقائي: الإيقاف اليدوي محترم حتى إعادة الارتباط', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_auto2');
+      final List<String> tried = <String>[];
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async {
+          tried.add(code);
+          return false;
+        },
+        delayPickFn: () => 500,
+        wifiSsidFn: () async => 'MyNet',
+      );
+      controller.setPortalUrl('http://portal.test/auto2');
+      controller.setAutoRun(true);
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (tried.isEmpty && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await controller.stop();
+      final int afterStop = tried.length;
+      // نفس الشبكة بلا إعادة ارتباط — يجب ألا يعيد التشغيل.
+      await Future<void>.delayed(const Duration(milliseconds: 3500));
+      expect(tried.length, afterStop,
+          reason: 'الإيقاف اليدوي يجب أن يُحترم حتى إعادة الارتباط الجديدة');
+      await controller.dispose();
+      await temp.delete(recursive: true);
+    });
+
+    test('الربط التلقائي: شبكة غير الهدف لا تشغّل المحرك', () async {
+      final Directory temp = await Directory.systemTemp.createTemp('ap_auto3');
+      final AutoPortalController controller = AutoPortalController(
+        detector: CaptivePortalDetector(SystemChannel.instance),
+        store: StateStore(directory: temp),
+        attemptFn: (String url, String code) async => false,
+        delayPickFn: () => 500,
+        wifiSsidFn: () async => 'OtherNet',
+      );
+      controller.setPortalUrl('http://portal.test/auto3');
+      controller.setLinkSsid('MyNet');
+      controller.setAutoRun(true);
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      expect(controller.monitoring, isFalse,
+          reason: 'ارتباط بشبكة غير الهدف يجب ألا يشغّل المحرك');
+      await controller.dispose();
       await temp.delete(recursive: true);
     });
   });

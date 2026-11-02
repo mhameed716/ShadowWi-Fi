@@ -8,7 +8,11 @@ import '../data/models/login_outcome.dart';
 import '../data/services/captive_portal_detector.dart';
 import '../data/services/portal_client.dart';
 import '../data/services/state_store.dart';
+import '../data/services/system_channel.dart';
 import 'logs_controller.dart';
+
+/// دالة قراءة SSID الشبكة المرتبطة حالياً (قابلة للحقن للاختبارات).
+typedef WifiSsidFn = Future<String> Function();
 
 /// دالة محاولة بوابة (قابلة للحقن للاختبارات): نجحت؟
 typedef PortalAttemptFn = Future<bool> Function(String portalUrl, String code);
@@ -31,13 +35,19 @@ class AutoPortalController extends ChangeNotifier {
     PortalAttemptFn? attemptFn,
     DetectFn? detectFn,
     DelayPickFn? delayPickFn,
+    WifiSsidFn? wifiSsidFn,
   })  : _detector = detector,
         _store = store,
         _logsController = logsController,
         _attemptFn = attemptFn ?? _defaultAttempt,
         _detectFn = detectFn ?? (() => detector.detect()),
-        _delayPickFn = delayPickFn ?? _defaultDelay {
+        _delayPickFn = delayPickFn ?? _defaultDelay,
+        _wifiSsidFn = wifiSsidFn ?? _defaultWifiSsid {
     unawaited(_restore());
+    _linkTimer = Timer.periodic(
+      const Duration(milliseconds: 2500),
+      (Timer _) => unawaited(_checkAutoRun()),
+    );
   }
 
   final CaptivePortalDetector _detector;
@@ -46,7 +56,25 @@ class AutoPortalController extends ChangeNotifier {
   final PortalAttemptFn _attemptFn;
   final DetectFn _detectFn;
   final DelayPickFn _delayPickFn;
+  final WifiSsidFn _wifiSsidFn;
   bool _disposed = false;
+
+  /// مؤقّت مراقبة الارتباط بالشبكة (الواجهة الأمامية فقط).
+  Timer? _linkTimer;
+
+  /// آخر SSID رُصد — التشغيل التلقائي يطلق عند تغيّر الارتباط فقط.
+  String _lastSsid = '';
+
+  /// قراءة SSID الحقيقية من قناة النظام (بلا أي انهيار في بيئة الاختبار).
+  static Future<String> _defaultWifiSsid() async {
+    try {
+      final Map<String, dynamic> info =
+          await SystemChannel.instance.wifiInfo();
+      return (info['ssid'] ?? '').toString();
+    } catch (_) {
+      return '';
+    }
+  }
 
   // ------------------------------------------------------------ الحالة
   /// هل المحرّك يعمل (مراقبة + محاولات)؟
@@ -106,6 +134,60 @@ class AutoPortalController extends ChangeNotifier {
   /// هل تبيّن أن البوابة تقبل أي رمز؟ (يفشل اختبار التمييز) — عندئذ
   /// يتوقف البحث كله لأن تحديد الرمز الصحيح مستحيل بنيوياً.
   bool acceptsAnything = false;
+
+  /// هل التشغيل التلقائي عند الارتباط بالشبكة مفعّل؟
+  bool autoRun = false;
+
+  /// شبكة الهدف للربط التلقائي (فارغة = أي شبكة واي فاي).
+  String linkSsid = '';
+
+  /// تفعيل/تعطيل التشغيل التلقائي عند الارتباط — عند التفعيل والهاتف
+  /// مرتبط بالهدف الآن يبدأ المحرك فوراً (هذا هو «التفعيل» المباشر).
+  void setAutoRun(bool value) {
+    if (_disposed) return;
+    autoRun = value;
+    notifyListeners();
+    if (value) {
+      unawaited(_checkAutoRun(force: true));
+    } else {
+      unawaited(_persist());
+    }
+  }
+
+  /// تحديث شبكة الهدف للربط التلقائي (فارغة = أي شبكة).
+  void setLinkSsid(String value) {
+    if (_disposed) return;
+    linkSsid = value.trim();
+    _lastSsid = '';
+    notifyListeners();
+    unawaited(_persist());
+  }
+
+  /// فحص دوري: أول ما يرتبط الهاتف بالشبكة الهدف (أو أي شبكة إن لم
+  /// تُحدَّد) يبدأ المحرك وحده — وضغطة الإيقاف اليدوي تحترم حتى
+  /// إعادة الارتباط الجديدة.
+  Future<void> _checkAutoRun({bool force = false}) async {
+    if (_disposed || !autoRun || monitoring) return;
+    String ssid = '';
+    try {
+      ssid = await _wifiSsidFn();
+    } catch (_) {
+      ssid = '';
+    }
+    if (_disposed || !autoRun || monitoring) return;
+    if (ssid.isEmpty) {
+      _lastSsid = '';
+      return;
+    }
+    if (linkSsid.isNotEmpty && ssid != linkSsid) {
+      _lastSsid = ssid;
+      return;
+    }
+    // ارتباط جديد فقط (أو تفعيل قسري من المفتاح).
+    if (!force && ssid == _lastSsid) return;
+    _lastSsid = ssid;
+    await start();
+  }
 
   // --------------------------------------------------------- مساعدات ثابتة
   /// تنسيق الرقم بطول محدد بأصفار يسارية (الافتراضي 10).
@@ -495,6 +577,8 @@ class AutoPortalController extends ChangeNotifier {
         if (state.step >= 1) {
           step = state.step;
         }
+        autoRun = state.autoRun;
+        linkSsid = state.linkSsid;
       }
       notifyListeners();
     } catch (_) {
@@ -510,6 +594,8 @@ class AutoPortalController extends ChangeNotifier {
         foundCodes: foundCodes,
         codeLength: codeLength,
         step: step,
+        autoRun: autoRun,
+        linkSsid: linkSsid,
       ));
     } catch (_) {
       // فشل الحفظ لا يعطل المحرك.
@@ -538,6 +624,7 @@ class AutoPortalController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _linkTimer?.cancel();
     _disposed = true;
     super.dispose();
   }
